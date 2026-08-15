@@ -1,0 +1,680 @@
+// AlterStays database schema.
+// Schema evolves through numbered domain migrations (see plan: Auth Database Design).
+// Migration 001 — Auth + platform RBAC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 001: Auth + platform RBAC
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+  DELETED
+}
+
+enum OtpPurpose {
+  REGISTRATION
+  LOGIN
+  PASSWORD_RESET
+  MOBILE_VERIFICATION
+  EMAIL_VERIFICATION
+}
+
+enum OtpChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+enum LoginMethod {
+  OTP
+  PASSWORD
+  GOOGLE
+  APPLE
+}
+
+enum AuthProvider {
+  GOOGLE
+  APPLE
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  firstName    String?
+  lastName     String?
+  email        String?  @unique
+  // Canonical E.164 phone, e.g. "+919876543210". Normalized on write so the
+  // same number can never exist in multiple formats.
+  phone        String   @unique
+  passwordHash String?
+  status       UserStatus @default(PENDING_VERIFICATION)
+
+  emailVerifiedAt  DateTime?
+  mobileVerifiedAt DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  otpVerifications OtpVerification[]
+  refreshTokens    RefreshToken[]
+  loginHistory     LoginHistory[]
+  authProviders    UserAuthProvider[]
+  userRoles        UserRole[]
+  organizationMembers OrganizationMember[]
+  reservations        Reservation[]
+
+  @@map("users")
+}
+
+model OtpVerification {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Normalized E.164 phone or lowercase email — the target of this OTP.
+  identifier String
+  purpose    OtpPurpose
+  channel    OtpChannel
+
+  otpHash   String
+  expiresAt DateTime
+
+  // Entered the correct code.
+  verifiedAt DateTime?
+  // Successfully used to complete the auth action (issue tokens / register).
+  // Kept distinct from verifiedAt: verifying and consuming are different
+  // events, and a verified-but-unconsumed OTP must not be replayable.
+  consumedAt DateTime?
+
+  // Audit trail only. Request/attempt rate limiting is enforced in the
+  // application layer (in-memory now, Redis later) — these rows are the
+  // source of record, not the rate limiter itself.
+  attemptCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([identifier, purpose, expiresAt])
+  @@index([userId])
+  @@map("otp_verifications")
+}
+
+model RefreshToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Access tokens are stateless JWTs and are never persisted; only the
+  // refresh token is stored, and only as a hash.
+  tokenHash String @unique
+
+  userAgent   String?
+  ipAddress   String?
+  deviceLabel String?
+
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model LoginHistory {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  identifier    String
+  loginMethod   LoginMethod
+  success       Boolean
+  failureReason String?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([identifier])
+  @@map("login_history")
+}
+
+// Social login identities. Only stores provider + providerUserId needed to
+// resolve login — no OAuth access/refresh tokens are stored unless a real
+// business need arises, and then only encrypted at rest.
+model UserAuthProvider {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider       AuthProvider
+  providerUserId String
+  providerEmail  String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("user_auth_providers")
+}
+
+// --- Platform RBAC ----------------------------------------------------------
+// Platform-level roles (CUSTOMER, SUPER_ADMIN, SUPPORT, FINANCE). Deliberately
+// separate from organization/property roles (OWNER, MANAGER, STAFF), which
+// are introduced on organization_members in Migration 002. A user can be a
+// platform CUSTOMER while also being an organization MANAGER.
+
+model Role {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id   String @id @default(uuid()) @db.Uuid
+  // Granular permission string, e.g. "property:approve", "reservation:refund".
+  name        String  @unique
+  description String?
+
+  createdAt DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 002: Organizations + properties
+// ---------------------------------------------------------------------------
+
+enum OrganizationType {
+  HOTEL_OPERATOR
+  HOTEL_CHAIN
+  PROPERTY_OWNER
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OrganizationRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum PropertyStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+  ARCHIVED
+}
+
+model Organization {
+  id     String             @id @default(uuid()) @db.Uuid
+  name   String
+  type   OrganizationType
+  status OrganizationStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      OrganizationMember[]
+  properties   Property[]
+  applications PropertyOnboardingApplication[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  organizationId String           @db.Uuid
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String           @db.Uuid
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           OrganizationRole
+
+  createdAt DateTime @default(now())
+
+  @@id([organizationId, userId])
+  @@map("organization_members")
+}
+
+model PropertyType {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique
+  name        String
+  description String?
+
+  properties Property[]
+
+  @@map("property_types")
+}
+
+model Property {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  propertyTypeId String         @db.Uuid
+  propertyType   PropertyType   @relation(fields: [propertyTypeId], references: [id])
+
+  name        String
+  slug        String         @unique
+  description String?
+  status      PropertyStatus @default(DRAFT)
+  starRating  Int?
+
+  checkInTime  String?
+  checkOutTime String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses    PropertyAddress[]
+  roomTypes    RoomType[]
+  rooms        Room[]
+  amenities    PropertyAmenity[]
+  images       PropertyImage[]
+  policies     PropertyPolicy[]
+  ratePlans    RatePlan[]
+  reservations Reservation[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("properties")
+}
+
+model PropertyAddress {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  country      String
+  postalCode   String?
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+
+  @@index([city, state, country])
+  @@map("property_addresses")
+}
+
+model PropertyOnboardingApplication {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String?      @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  applicantName  String
+  applicantEmail String?
+  applicantPhone String?
+  status         String   @default("SUBMITTED")
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("property_onboarding_applications")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 003: Room catalog
+// ---------------------------------------------------------------------------
+
+model Amenity {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique
+  category String?
+  icon     String?
+  status   String  @default("ACTIVE")
+
+  properties PropertyAmenity[]
+  roomTypes  RoomAmenity[]
+
+  @@map("amenities")
+}
+
+model RoomType {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name          String
+  description   String?
+  maxAdults     Int
+  maxChildren   Int      @default(0)
+  maxOccupancy  Int
+  bedType       String?
+  sizeSqm       Decimal? @db.Decimal(8, 2)
+  status        String   @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms            Room[]
+  amenities        RoomAmenity[]
+  images           RoomTypeImage[]
+  inventory        RoomInventory[]
+  ratePlans        RatePlan[]
+  reservationItems ReservationItem[]
+  inventoryHolds   InventoryHold[]
+
+  @@index([propertyId])
+  @@map("room_types")
+}
+
+model Room {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomTypeId String   @db.Uuid
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  roomNumber String
+  floor      String?
+  status     String  @default("ACTIVE")
+
+  @@unique([propertyId, roomNumber])
+  @@index([roomTypeId])
+  @@map("rooms")
+}
+
+model PropertyAmenity {
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  amenityId  String   @db.Uuid
+  amenity    Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+
+  @@id([propertyId, amenityId])
+  @@map("property_amenities")
+}
+
+model RoomAmenity {
+  roomTypeId String   @db.Uuid
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  amenityId  String   @db.Uuid
+  amenity    Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+
+  @@id([roomTypeId, amenityId])
+  @@map("room_amenities")
+}
+
+model PropertyImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  url       String
+  type      String  @default("PROPERTY")
+  sortOrder Int     @default(0)
+  altText   String?
+
+  @@index([propertyId])
+  @@map("property_images")
+}
+
+model RoomTypeImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  roomTypeId String   @db.Uuid
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  url       String
+  type      String  @default("ROOM")
+  sortOrder Int     @default(0)
+  altText   String?
+
+  @@index([roomTypeId])
+  @@map("room_type_images")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 004: Inventory + rate plans
+// ---------------------------------------------------------------------------
+
+model CancellationPolicy {
+  id          String @id @default(uuid()) @db.Uuid
+  name        String @unique
+  description String
+  rulesJson   Json?
+
+  ratePlans RatePlan[]
+
+  @@map("cancellation_policies")
+}
+
+model MealPlan {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+  name String
+
+  ratePlans RatePlan[]
+
+  @@map("meal_plans")
+}
+
+model PropertyPolicy {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  policyType  String
+  title       String
+  description String?
+
+  @@index([propertyId])
+  @@map("property_policies")
+}
+
+model RoomInventory {
+  id         String   @id @default(uuid()) @db.Uuid
+  roomTypeId String   @db.Uuid
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  date         DateTime @db.Date
+  totalRooms   Int
+  blockedRooms Int      @default(0)
+  soldRooms    Int      @default(0)
+
+  @@unique([roomTypeId, date])
+  @@index([date])
+  @@map("room_inventory")
+}
+
+model RatePlan {
+  id                   String              @id @default(uuid()) @db.Uuid
+  propertyId           String              @db.Uuid
+  property             Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomTypeId           String              @db.Uuid
+  roomType             RoomType            @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  mealPlanId           String?             @db.Uuid
+  mealPlan             MealPlan?           @relation(fields: [mealPlanId], references: [id], onDelete: SetNull)
+  cancellationPolicyId String?             @db.Uuid
+  cancellationPolicy   CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
+
+  name        String
+  description String?
+  status      String  @default("ACTIVE")
+
+  prices           RatePrice[]
+  reservationItems ReservationItem[]
+
+  @@index([propertyId, roomTypeId])
+  @@map("rate_plans")
+}
+
+model RatePrice {
+  id         String   @id @default(uuid()) @db.Uuid
+  ratePlanId String   @db.Uuid
+  ratePlan   RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+
+  date     DateTime @db.Date
+  basePrice Decimal @db.Decimal(12, 2)
+  currency String   @default("INR")
+
+  minStay         Int?
+  maxStay         Int?
+  closedToArrival Boolean @default(false)
+  closedToDeparture Boolean @default(false)
+  pricingRulesJson Json?
+
+  @@unique([ratePlanId, date])
+  @@index([date])
+  @@map("rate_prices")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 005: Reservations + inventory holds
+// ---------------------------------------------------------------------------
+
+enum ReservationStatus {
+  PENDING
+  PAYMENT_PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+  COMPLETED
+  NO_SHOW
+}
+
+model Reservation {
+  id                String            @id @default(uuid()) @db.Uuid
+  reservationNumber String            @unique
+  userId            String            @db.Uuid
+  user              User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  propertyId        String            @db.Uuid
+  property          Property          @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  checkIn  DateTime @db.Date
+  checkOut DateTime @db.Date
+  status   ReservationStatus @default(PENDING)
+
+  subtotal       Decimal @db.Decimal(12, 2)
+  taxAmount      Decimal @db.Decimal(12, 2) @default(0)
+  discountAmount Decimal @db.Decimal(12, 2) @default(0)
+  totalAmount    Decimal @db.Decimal(12, 2)
+  currency       String  @default("INR")
+
+  holdExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items          ReservationItem[]
+  guests         Guest[]
+  inventoryHolds InventoryHold[]
+
+  @@index([userId])
+  @@index([propertyId, status])
+  @@map("reservations")
+}
+
+model ReservationItem {
+  id            String      @id @default(uuid()) @db.Uuid
+  reservationId String      @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  roomTypeId    String      @db.Uuid
+  roomType      RoomType    @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  ratePlanId    String      @db.Uuid
+  ratePlan      RatePlan    @relation(fields: [ratePlanId], references: [id], onDelete: Restrict)
+
+  quantity Int
+  checkIn  DateTime @db.Date
+  checkOut DateTime @db.Date
+
+  unitPrice  Decimal @db.Decimal(12, 2)
+  subtotal   Decimal @db.Decimal(12, 2)
+  taxAmount  Decimal @db.Decimal(12, 2) @default(0)
+  totalAmount Decimal @db.Decimal(12, 2)
+
+  roomTypeName           String
+  ratePlanName           String
+  mealPlanName           String?
+  cancellationPolicyText String?
+  snapshotJson           Json?
+
+  @@index([reservationId])
+  @@map("reservation_items")
+}
+
+model Guest {
+  id            String      @id @default(uuid()) @db.Uuid
+  reservationId String      @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  firstName String
+  lastName  String?
+  age       Int?
+  gender    String?
+  phone     String?
+  email     String?
+
+  @@index([reservationId])
+  @@map("guests")
+}
+
+model InventoryHold {
+  id            String      @id @default(uuid()) @db.Uuid
+  reservationId String      @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  roomTypeId    String      @db.Uuid
+  roomType      RoomType    @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  date     DateTime @db.Date
+  quantity Int
+  expiresAt DateTime
+
+  @@index([reservationId])
+  @@index([roomTypeId, date])
+  @@map("inventory_holds")
+}

@@ -1,0 +1,228 @@
+// AlterStays database schema.
+// Schema evolves through numbered domain migrations (see plan: Auth Database Design).
+// Migration 001 — Auth + platform RBAC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 001: Auth + platform RBAC
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+  DELETED
+}
+
+enum OtpPurpose {
+  REGISTRATION
+  LOGIN
+  PASSWORD_RESET
+  MOBILE_VERIFICATION
+  EMAIL_VERIFICATION
+}
+
+enum OtpChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+enum LoginMethod {
+  OTP
+  PASSWORD
+  GOOGLE
+  APPLE
+}
+
+enum AuthProvider {
+  GOOGLE
+  APPLE
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  firstName    String?
+  lastName     String?
+  email        String?  @unique
+  // Canonical E.164 phone, e.g. "+919876543210". Normalized on write so the
+  // same number can never exist in multiple formats.
+  phone        String   @unique
+  passwordHash String?
+  status       UserStatus @default(PENDING_VERIFICATION)
+
+  emailVerifiedAt  DateTime?
+  mobileVerifiedAt DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  otpVerifications OtpVerification[]
+  refreshTokens    RefreshToken[]
+  loginHistory     LoginHistory[]
+  authProviders    UserAuthProvider[]
+  userRoles        UserRole[]
+
+  @@map("users")
+}
+
+model OtpVerification {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Normalized E.164 phone or lowercase email — the target of this OTP.
+  identifier String
+  purpose    OtpPurpose
+  channel    OtpChannel
+
+  otpHash   String
+  expiresAt DateTime
+
+  // Entered the correct code.
+  verifiedAt DateTime?
+  // Successfully used to complete the auth action (issue tokens / register).
+  // Kept distinct from verifiedAt: verifying and consuming are different
+  // events, and a verified-but-unconsumed OTP must not be replayable.
+  consumedAt DateTime?
+
+  // Audit trail only. Request/attempt rate limiting is enforced in the
+  // application layer (in-memory now, Redis later) — these rows are the
+  // source of record, not the rate limiter itself.
+  attemptCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([identifier, purpose, expiresAt])
+  @@index([userId])
+  @@map("otp_verifications")
+}
+
+model RefreshToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Access tokens are stateless JWTs and are never persisted; only the
+  // refresh token is stored, and only as a hash.
+  tokenHash String @unique
+
+  userAgent   String?
+  ipAddress   String?
+  deviceLabel String?
+
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model LoginHistory {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  identifier    String
+  loginMethod   LoginMethod
+  success       Boolean
+  failureReason String?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([identifier])
+  @@map("login_history")
+}
+
+// Social login identities. Only stores provider + providerUserId needed to
+// resolve login — no OAuth access/refresh tokens are stored unless a real
+// business need arises, and then only encrypted at rest.
+model UserAuthProvider {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider       AuthProvider
+  providerUserId String
+  providerEmail  String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("user_auth_providers")
+}
+
+// --- Platform RBAC ----------------------------------------------------------
+// Platform-level roles (CUSTOMER, SUPER_ADMIN, SUPPORT, FINANCE). Deliberately
+// separate from organization/property roles (OWNER, MANAGER, STAFF), which
+// are introduced on organization_members in Migration 002. A user can be a
+// platform CUSTOMER while also being an organization MANAGER.
+
+model Role {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id   String @id @default(uuid()) @db.Uuid
+  // Granular permission string, e.g. "property:approve", "reservation:refund".
+  name        String  @unique
+  description String?
+
+  createdAt DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
