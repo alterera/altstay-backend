@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PropertyStatus } from '../prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { eachNight } from '../admin/admin.utils';
 import { S3Service } from '../admin/uploads/s3.service';
+import { PricingService } from '../pricing/pricing.service';
 import {
-  estimateTaxes,
   matchesPriceBucket,
   parseCsv,
   parsePriceBuckets,
@@ -39,6 +39,7 @@ export class SearchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly pricing: PricingService,
   ) {}
 
   async listAreas(cityName: string, query?: string) {
@@ -53,7 +54,11 @@ export class SearchService {
         },
       },
     });
-    if (!city) return { city: cityName, areas: [] as { id: string; name: string; slug: string }[] };
+    if (!city)
+      return {
+        city: cityName,
+        areas: [] as { id: string; name: string; slug: string }[],
+      };
     return {
       city: city.name,
       areas: city.areas.map((a) => ({ id: a.id, name: a.name, slug: a.slug })),
@@ -67,11 +72,261 @@ export class SearchService {
     });
   }
 
+  async getPropertyBySlug(slug: string, query: SearchQuery) {
+    const roomsNeeded = query.rooms ?? 1;
+    const guestCount =
+      query.guests ?? (query.adults ?? 2) + (query.children ?? 0);
+    const nights =
+      query.checkIn && query.checkOut
+        ? eachNight(query.checkIn, query.checkOut)
+        : [];
+
+    const property = await this.prisma.property.findFirst({
+      where: { slug, status: PropertyStatus.ACTIVE },
+      include: {
+        propertyType: true,
+        area: true,
+        addresses: true,
+        images: { orderBy: { sortOrder: 'asc' } },
+        amenities: {
+          include: { amenity: true },
+          orderBy: { amenity: { name: 'asc' } },
+        },
+        policies: { orderBy: { title: 'asc' } },
+        tags: { include: { tag: true } },
+        roomTypes: {
+          where: { status: 'ACTIVE' },
+          include: {
+            images: { orderBy: { sortOrder: 'asc' } },
+            amenities: { include: { amenity: true } },
+            inventory: nights.length
+              ? { where: { date: { in: nights } } }
+              : false,
+            ratePlans: {
+              where: { status: 'ACTIVE' },
+              include: {
+                mealPlan: true,
+                cancellationPolicy: true,
+                prices: nights.length
+                  ? { where: { date: { in: nights } } }
+                  : false,
+              },
+            },
+          },
+          orderBy: { name: 'asc' },
+        },
+      },
+    });
+
+    if (!property) {
+      throw new NotFoundException('Property not found');
+    }
+
+    const address = property.addresses[0];
+    const nightsCount = nights.length || 1;
+    const imageUrls = await this.s3.toDisplayUrls(
+      property.images.map((img) => img.url),
+    );
+
+    const roomTypes = (
+      await Promise.all(
+        property.roomTypes.map(async (roomType) => {
+          const availability = this.computeRoomTypeAvailability(
+            roomType,
+            nights,
+            guestCount,
+            roomsNeeded,
+          );
+          if (nights.length && !availability.available) return null;
+
+          const roomImageUrls = await this.s3.toDisplayUrls(
+            roomType.images.map((img) => img.url),
+          );
+
+          const ratePlans = roomType.ratePlans
+            .map((plan) => {
+              if (!nights.length) {
+                return {
+                  id: plan.id,
+                  name: plan.name,
+                  description: plan.description,
+                  mealPlan: plan.mealPlan
+                    ? { code: plan.mealPlan.code, name: plan.mealPlan.name }
+                    : null,
+                  cancellationPolicy: plan.cancellationPolicy
+                    ? {
+                        name: plan.cancellationPolicy.name,
+                        description: plan.cancellationPolicy.description,
+                      }
+                    : null,
+                  totalPrice: null as number | null,
+                  pricePerNight: null as number | null,
+                  estimatedTaxes: null as number | null,
+                  currency: 'INR' as const,
+                };
+              }
+
+              const prices = this.pricing.matchNights(plan.prices, nights);
+              if (!prices) return null;
+
+              const quote = this.pricing.computeQuote(prices, 1);
+              const totalPrice = quote.subtotal;
+
+              return {
+                id: plan.id,
+                name: plan.name,
+                description: plan.description,
+                mealPlan: plan.mealPlan
+                  ? { code: plan.mealPlan.code, name: plan.mealPlan.name }
+                  : null,
+                cancellationPolicy: plan.cancellationPolicy
+                  ? {
+                      name: plan.cancellationPolicy.name,
+                      description: plan.cancellationPolicy.description,
+                    }
+                  : null,
+                totalPrice,
+                pricePerNight: Math.round(totalPrice / nightsCount),
+                estimatedTaxes: quote.taxAmount,
+                currency: 'INR' as const,
+              };
+            })
+            .filter((plan): plan is NonNullable<typeof plan> => plan !== null);
+
+          if (nights.length && ratePlans.length === 0) return null;
+
+          return {
+            id: roomType.id,
+            name: roomType.name,
+            description: roomType.description,
+            maxAdults: roomType.maxAdults,
+            maxChildren: roomType.maxChildren,
+            maxOccupancy: roomType.maxOccupancy,
+            bedType: roomType.bedType,
+            sizeSqm: roomType.sizeSqm ? Number(roomType.sizeSqm) : null,
+            imageUrls: roomImageUrls,
+            amenities: roomType.amenities.map((a) => a.amenity.name),
+            ratePlans,
+            minPricePerNight:
+              ratePlans.length > 0
+                ? Math.min(
+                    ...ratePlans
+                      .map((p) => p.pricePerNight)
+                      .filter((p): p is number => p !== null),
+                  )
+                : null,
+          };
+        }),
+      )
+    ).filter((room): room is NonNullable<typeof room> => room !== null);
+
+    const allMinPrices = roomTypes
+      .map((rt) => rt.minPricePerNight)
+      .filter((p): p is number => p !== null);
+    const minPricePerNight =
+      allMinPrices.length > 0 ? Math.min(...allMinPrices) : null;
+    const minTotalPrice =
+      minPricePerNight !== null ? minPricePerNight * nightsCount : null;
+
+    return {
+      id: property.id,
+      name: property.name,
+      slug: property.slug,
+      description: property.description,
+      starRating: property.starRating,
+      guestRating: property.guestRating ? Number(property.guestRating) : null,
+      isBusinessHotel: property.isBusinessHotel,
+      checkInTime: property.checkInTime,
+      checkOutTime: property.checkOutTime,
+      propertyType: property.propertyType,
+      city: address?.city,
+      area: property.area?.name ?? address?.city,
+      state: address?.state,
+      country: address?.country,
+      address: address
+        ? {
+            addressLine1: address.addressLine1,
+            addressLine2: address.addressLine2,
+            city: address.city,
+            state: address.state,
+            country: address.country,
+            postalCode: address.postalCode,
+            latitude: address.latitude ? Number(address.latitude) : null,
+            longitude: address.longitude ? Number(address.longitude) : null,
+          }
+        : null,
+      imageUrls,
+      tags: property.tags.map((t) => ({
+        code: t.tag.code,
+        name: t.tag.name,
+      })),
+      amenities: property.amenities.map((a) => ({
+        id: a.amenity.id,
+        name: a.amenity.name,
+        category: a.amenity.category,
+      })),
+      policies: property.policies.map((p) => ({
+        id: p.id,
+        policyType: p.policyType,
+        title: p.title,
+        description: p.description,
+      })),
+      roomTypes,
+      minTotalPrice,
+      minPricePerNight,
+      estimatedTaxes:
+        minTotalPrice !== null
+          ? this.pricing.estimateTaxes(minTotalPrice)
+          : null,
+      currency: 'INR',
+      nights: nightsCount,
+    };
+  }
+
+  private computeRoomTypeAvailability(
+    roomType: Prisma.RoomTypeGetPayload<{
+      include: {
+        inventory: true;
+        ratePlans: { include: { prices: true } };
+      };
+    }>,
+    nights: Date[],
+    guestCount: number,
+    roomsNeeded: number,
+  ) {
+    const minOccupancy = Math.ceil(guestCount / roomsNeeded);
+    if (roomType.maxOccupancy < minOccupancy) {
+      return { available: false };
+    }
+
+    if (!nights.length) {
+      return { available: roomType.ratePlans.length > 0 };
+    }
+
+    const inventoryOk = nights.every((night) => {
+      const row = roomType.inventory.find(
+        (inv) => inv.date.getTime() === night.getTime(),
+      );
+      if (!row) return false;
+      const free = row.totalRooms - row.blockedRooms - row.soldRooms;
+      return free >= roomsNeeded;
+    });
+
+    if (!inventoryOk) return { available: false };
+
+    const hasPricing = roomType.ratePlans.some((plan) =>
+      nights.every((night) =>
+        plan.prices.some((p) => p.date.getTime() === night.getTime()),
+      ),
+    );
+
+    return { available: hasPricing };
+  }
+
   async searchProperties(query: SearchQuery) {
     const roomsNeeded = query.rooms ?? 1;
     const guestCount =
-      query.guests ??
-      (query.adults ?? 2) + (query.children ?? 0);
+      query.guests ?? (query.adults ?? 2) + (query.children ?? 0);
     const nights =
       query.checkIn && query.checkOut
         ? eachNight(query.checkIn, query.checkOut)
@@ -85,9 +340,7 @@ export class SearchService {
       where: {
         status: PropertyStatus.ACTIVE,
         ...(query.businessHotels ? { isBusinessHotel: true } : {}),
-        ...(query.minRating
-          ? { guestRating: { gte: query.minRating } }
-          : {}),
+        ...(query.minRating ? { guestRating: { gte: query.minRating } } : {}),
         ...(propertyTypeIds.length
           ? { propertyTypeId: { in: propertyTypeIds } }
           : {}),
@@ -181,7 +434,9 @@ export class SearchService {
               minTotalPrice,
               minPricePerNight,
               estimatedTaxes:
-                minTotalPrice !== null ? estimateTaxes(minTotalPrice) : null,
+                minTotalPrice !== null
+                  ? this.pricing.estimateTaxes(minTotalPrice)
+                  : null,
               currency: 'INR',
               nights: nights.length,
               availableRoomTypeCount: availability.availableRoomTypeCount,
@@ -243,11 +498,9 @@ export class SearchService {
 
       let roomTypeBest: number | null = null;
       for (const plan of roomType.ratePlans) {
-        const prices = nights.map((night) =>
-          plan.prices.find((p) => p.date.getTime() === night.getTime()),
-        );
-        if (prices.some((p) => !p)) continue;
-        const total = prices.reduce((sum, p) => sum + Number(p!.basePrice), 0);
+        const prices = this.pricing.matchNights(plan.prices, nights);
+        if (!prices) continue;
+        const total = this.pricing.computeQuote(prices, 1).subtotal;
         if (roomTypeBest === null || total < roomTypeBest) {
           roomTypeBest = total;
         }
@@ -285,19 +538,14 @@ export class SearchService {
         break;
       case 'price_desc':
         sorted.sort(
-          (a, b) =>
-            (b.minPricePerNight ?? -1) - (a.minPricePerNight ?? -1),
+          (a, b) => (b.minPricePerNight ?? -1) - (a.minPricePerNight ?? -1),
         );
         break;
       case 'rating_asc':
-        sorted.sort(
-          (a, b) => (a.guestRating ?? 0) - (b.guestRating ?? 0),
-        );
+        sorted.sort((a, b) => (a.guestRating ?? 0) - (b.guestRating ?? 0));
         break;
       case 'rating_desc':
-        sorted.sort(
-          (a, b) => (b.guestRating ?? 0) - (a.guestRating ?? 0),
-        );
+        sorted.sort((a, b) => (b.guestRating ?? 0) - (a.guestRating ?? 0));
         break;
       default:
         sorted.sort((a, b) => a.name.localeCompare(b.name));

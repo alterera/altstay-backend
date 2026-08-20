@@ -24,6 +24,8 @@ import { RateLimitService } from './rate-limit/rate-limit.service';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, RateLimitService],
-  exports: [AuthService],
+  // RateLimitService is exported so other modules throttle against the same
+  // buckets rather than each holding a private counter.
+  exports: [AuthService, RateLimitService],
 })
 export class AuthModule {}

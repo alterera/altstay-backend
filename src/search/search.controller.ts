@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -82,11 +82,16 @@ export class SearchController {
     return this.search.searchProperties(query);
   }
 
-  @Get('areas')
-  listAreas(
-    @Query('city') city: string,
-    @Query('q') q?: string,
+  @Get('properties/:slug')
+  getPropertyBySlug(
+    @Param('slug') slug: string,
+    @Query() query: SearchPropertiesQueryDto,
   ) {
+    return this.search.getPropertyBySlug(slug, query);
+  }
+
+  @Get('areas')
+  listAreas(@Query('city') city: string, @Query('q') q?: string) {
     return this.search.listAreas(city, q);
   }
 

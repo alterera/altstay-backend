@@ -8,15 +8,14 @@ export const PRICE_BUCKETS = [
 ] as const;
 
 export type SortOption =
-  | 'price_asc'
-  | 'price_desc'
-  | 'rating_asc'
-  | 'rating_desc'
-  | 'recommended';
+  'price_asc' | 'price_desc' | 'rating_asc' | 'rating_desc' | 'recommended';
 
 export function parsePriceBuckets(raw?: string): string[] {
   if (!raw) return [];
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export function matchesPriceBucket(
@@ -34,9 +33,8 @@ export function matchesPriceBucket(
 
 export function parseCsv(raw?: string): string[] {
   if (!raw) return [];
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
-}
-
-export function estimateTaxes(amount: number): number {
-  return Math.round(amount * 0.18);
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }

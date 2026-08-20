@@ -18,7 +18,10 @@ function isPrivateLanOrigin(origin: string): boolean {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody keeps the untouched request bytes available on `req.rawBody`, which is
+  // what HMAC verification of inbound payment notifications signs over. A
+  // re-serialised body would not reproduce the sender's signature.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

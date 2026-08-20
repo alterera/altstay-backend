@@ -95,10 +95,16 @@ export class AuthService {
       },
     });
 
-    // OTP delivery is stubbed — log in development only.
-    this.logger.log(
-      `OTP for ${phone} (${purpose}/${channel}): ${otp} [dev stub]`,
-    );
+    // OTP delivery is stubbed — always print to the backend terminal in dev.
+    const otpMessage = `OTP for ${phone} (${purpose}/${channel}): ${otp}`;
+    this.logger.log(`${otpMessage} [dev stub]`);
+
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.log(
+        `\n${'='.repeat(48)}\nDEV LOGIN OTP\nPhone: ${phone}\nCode:  ${otp}\nExpires in ${OTP_TTL_MS / 1000}s\n${'='.repeat(48)}\n`,
+      );
+    }
 
     return {
       success: true,

@@ -665,6 +665,14 @@ model Reservation {
 
   holdExpiresAt DateTime?
 
+  // Migration 009: GST/business booking details. Populated together or not at all.
+  companyName    String?
+  gstin          String?
+  billingAddress String?
+
+  // Migration 010: set when payment confirmation commits.
+  confirmedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -673,10 +681,30 @@ model Reservation {
   inventoryHolds InventoryHold[]
   payments       Payment[]
   reviews        Review[]
+  statusHistory  ReservationStatusHistory[]
 
   @@index([userId])
   @@index([propertyId, status])
   @@map("reservations")
+}
+
+/// Migration 010: append-only audit of reservation status changes. Written in the
+/// same transaction as the change itself, so the trail cannot drift from reality.
+model ReservationStatusHistory {
+  id            String      @id @default(uuid()) @db.Uuid
+  reservationId String      @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  fromStatus ReservationStatus?
+  toStatus   ReservationStatus
+  reason     String?
+  actor      String
+  metadata   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([reservationId, createdAt])
+  @@map("reservation_status_history")
 }
 
 model ReservationItem {
@@ -757,22 +785,32 @@ model Payment {
   reservationId String        @db.Uuid
   reservation   Reservation   @relation(fields: [reservationId], references: [id], onDelete: Restrict)
 
-  provider            String
-  providerPaymentId   String?
-  providerOrderId     String?
-  paymentReference    String?
-  amount              Decimal       @db.Decimal(12, 2)
-  currency            String        @default("INR")
-  status              PaymentStatus @default(PENDING)
-  paymentMethod       String?
+  provider          String
+  providerPaymentId String?
+  providerOrderId   String?
+  /// Cross-service correlation key. Generated here, used as Cashfree's `order_id`.
+  paymentReference  String        @unique
+  amount            Decimal       @db.Decimal(12, 2)
+  currency          String        @default("INR")
+  status            PaymentStatus @default(PENDING)
+  paymentMethod     String?
+
+  // Migration 010
+  failureReason String?
+  /// Money was captured but the reservation could not be confirmed. A later phase
+  /// acts on this; Phase B only records it.
+  refundRequired Boolean @default(false)
+  refundReason   String?
 
   paidAt    DateTime?
   createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   refunds Refund[]
 
   @@unique([provider, providerPaymentId])
   @@index([reservationId])
+  @@index([reservationId, status])
   @@map("payments")
 }
 
@@ -793,14 +831,28 @@ model Refund {
   @@map("refunds")
 }
 
+/// Idempotency ledger for inbound payment events. The unique `(provider,
+/// providerEventId)` pair is claimed before processing; `responseStatus` and
+/// `responsePayload` store the terminal HTTP outcome so a duplicate delivery
+/// replays the original answer rather than recomputing it.
 model PaymentWebhookEvent {
   id              String @id @default(uuid()) @db.Uuid
   provider        String
   providerEventId String
   payload         Json
-  processedAt     DateTime?
+
+  // Migration 010
+  eventType        String?
+  receivedAt       DateTime @default(now())
+  processingStatus String   @default("PROCESSING")
+  processingError  String?
+  responseStatus   Int?
+  responsePayload  Json?
+
+  processedAt DateTime?
 
   @@unique([provider, providerEventId])
+  @@index([processingStatus, receivedAt])
   @@map("payment_webhook_events")
 }
 
@@ -824,4 +876,41 @@ model Review {
 
   @@index([propertyId])
   @@map("reviews")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 009: Booking idempotency claims
+// ---------------------------------------------------------------------------
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// Claim ticket for `POST /bookings`. Safety comes from the unique index on
+/// (userId, idempotencyKey): a request inserts its claim first and treats a
+/// unique violation as "someone else owns this key", which is race-free in a way
+/// that a read-then-write check is not.
+///
+/// Deliberately has no FK to `reservations`: the claim is created before the
+/// reservation exists, and the cleanup job must be free to delete claims without
+/// touching bookings.
+model BookingIdempotency {
+  id             String            @id @default(uuid()) @db.Uuid
+  userId         String            @db.Uuid
+  idempotencyKey String
+  /// Hash of the normalized request body, used to reject key reuse with different input.
+  requestHash    String
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  reservationId  String?           @db.Uuid
+
+  createdAt DateTime @default(now())
+  /// After this instant the row is eligible for deletion by the cleanup job.
+  /// The key only becomes reusable once that deletion actually happens.
+  expiresAt DateTime
+
+  @@unique([userId, idempotencyKey])
+  @@index([expiresAt])
+  @@index([status, createdAt])
+  @@map("booking_idempotency")
 }
