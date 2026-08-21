@@ -11,7 +11,9 @@ import {
 
 export type SessionBody = {
   paymentReference: string;
+  paymentSessionId: string;
   checkoutUrl: string;
+  cashfreeMode: 'production' | 'sandbox';
   sessionExpiresAt: string | null;
   amount: string;
   currency: string;
@@ -60,6 +62,7 @@ export class StubPaymentService {
       paymentSessionId: `session_${body.paymentReference}`,
       providerOrderId: body.paymentReference,
       checkoutUrl: `https://checkout.e2e.invalid/#session_${body.paymentReference}`,
+      cashfreeMode: 'sandbox' as const,
       status: 'PENDING',
       sessionExpiresAt: body.expiresAt,
     };

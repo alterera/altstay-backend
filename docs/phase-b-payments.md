@@ -29,7 +29,9 @@ short re-lock to publish or abort the session.
 ```json
 {
   "paymentReference": "PAY-9f2c...",
-  "checkoutUrl": "https://payments.cashfree.com/order/#...",
+  "paymentSessionId": "session_...",
+  "checkoutUrl": "https://payments.cashfree.com/order/#session_...",
+  "cashfreeMode": "production",
   "sessionExpiresAt": "2026-08-20T07:05:00.000Z",
   "amount": "8700.00",
   "currency": "INR",

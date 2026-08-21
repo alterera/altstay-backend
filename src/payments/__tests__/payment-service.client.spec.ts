@@ -72,6 +72,7 @@ describe('PaymentServiceClient', () => {
           paymentSessionId: 'session_abc',
           providerOrderId: 'PAY-1',
           checkoutUrl: 'https://checkout.example.test/#session_abc',
+          cashfreeMode: 'production',
           status: 'PENDING',
           sessionExpiresAt: '2026-08-20T07:10:00.000Z',
         }),

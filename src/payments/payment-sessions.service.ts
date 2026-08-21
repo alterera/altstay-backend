@@ -27,7 +27,9 @@ const LIVE_PAYMENT_STATUSES = [PaymentStatus.PENDING, PaymentStatus.AUTHORIZED];
 
 export type PaymentSessionResponse = {
   paymentReference: string;
+  paymentSessionId: string;
   checkoutUrl: string;
+  cashfreeMode: 'production' | 'sandbox';
   sessionExpiresAt: string | null;
   amount: string;
   currency: string;
@@ -191,6 +193,8 @@ export class PaymentSessionsService {
     prepared: PreparedAttempt,
     session: {
       checkoutUrl: string;
+      paymentSessionId: string;
+      cashfreeMode: 'production' | 'sandbox';
       providerOrderId: string;
       sessionExpiresAt: string | null;
     },
@@ -252,7 +256,9 @@ export class PaymentSessionsService {
 
     return {
       paymentReference: prepared.paymentReference,
+      paymentSessionId: session.paymentSessionId,
       checkoutUrl: session.checkoutUrl,
+      cashfreeMode: session.cashfreeMode,
       sessionExpiresAt: session.sessionExpiresAt,
       amount: prepared.amount,
       currency: prepared.currency,

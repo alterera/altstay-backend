@@ -49,6 +49,8 @@ describe('POST /bookings/:reference/payment-session (e2e)', () => {
       expect(res.status).toBe(201);
       const body = sessionOf(res);
       expect(body.checkoutUrl).toContain('checkout.e2e.invalid');
+      expect(body.paymentSessionId).toMatch(/^session_/);
+      expect(body.cashfreeMode).toBe('sandbox');
       expect(body.paymentReference).toMatch(/^PAY-/);
       expect(body.amount).toBe(booking.totalAmount.toFixed(2));
 

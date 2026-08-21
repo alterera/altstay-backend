@@ -20,7 +20,8 @@ import {
   toBookingResponse,
 } from './dto/booking-response.dto';
 
-const DEFAULT_HOLD_TTL_MINUTES = 10;
+/** Cashfree rejects checkout when order_expiry_time is within 15 minutes. */
+const DEFAULT_HOLD_TTL_MINUTES = 30;
 /** Only ever consumed by an astronomically unlikely reservation number clash. */
 const CREATE_ATTEMPTS = 3;
 

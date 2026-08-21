@@ -27,6 +27,7 @@ export type CreateSessionResponse = {
   paymentSessionId: string;
   providerOrderId: string;
   checkoutUrl: string;
+  cashfreeMode: 'production' | 'sandbox';
   status: string;
   sessionExpiresAt: string | null;
 };

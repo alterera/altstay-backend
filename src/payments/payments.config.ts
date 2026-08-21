@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_SKEW_SECONDS = 300;
-const DEFAULT_MIN_HOLD_REMAINING_SECONDS = 60;
+/** Cashfree requires order_expiry_time more than 15 minutes from checkout open. */
+const DEFAULT_MIN_HOLD_REMAINING_SECONDS = 16 * 60;
 const DEFAULT_STALE_ATTEMPT_MINUTES = 15;
 
 /**
