@@ -53,6 +53,7 @@ export class S3Service {
   private readonly bucket: string;
   private readonly region: string;
   private readonly publicBaseUrl: string;
+  private readonly signDisplayUrls: boolean;
 
   constructor(private readonly config: ConfigService) {
     this.region = this.config.getOrThrow<string>('AWS_REGION');
@@ -62,6 +63,8 @@ export class S3Service {
       this.bucket,
       this.region,
     );
+    this.signDisplayUrls =
+      this.config.get<string>('S3_SIGN_DISPLAY_URLS') === 'true';
 
     this.client = new S3Client({
       region: this.region,
@@ -99,6 +102,12 @@ export class S3Service {
   async toDisplayUrl(storedUrl: string): Promise<string> {
     const key = this.extractObjectKey(storedUrl);
     if (!key) return storedUrl;
+
+    // Public buckets already serve the object; presigning every image is a
+    // round-trip to AWS and is what made admin/search property loads feel stuck.
+    if (!this.signDisplayUrls) {
+      return `${this.publicBaseUrl}/${key}`;
+    }
 
     return getSignedUrl(
       this.client,

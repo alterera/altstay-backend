@@ -36,14 +36,32 @@ export class AdminPropertiesService {
 
   async list() {
     const properties = await this.prisma.property.findMany({
-      include: {
-        propertyType: true,
-        addresses: true,
-        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        status: true,
+        starRating: true,
+        updatedAt: true,
+        propertyType: { select: { id: true, code: true, name: true, description: true } },
+        addresses: {
+          take: 1,
+          select: {
+            id: true,
+            addressLine1: true,
+            addressLine2: true,
+            city: true,
+            state: true,
+            country: true,
+            postalCode: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
       },
       orderBy: { updatedAt: 'desc' },
     });
-    return Promise.all(properties.map((property) => this.withSignedImages(property)));
+    return properties;
   }
 
   async getById(id: string) {
@@ -118,7 +136,7 @@ export class AdminPropertiesService {
   }
 
   async update(id: string, dto: UpdatePropertyDto) {
-    await this.getById(id);
+    await this.assertExists(id);
 
     const data: Prisma.PropertyUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -198,7 +216,7 @@ export class AdminPropertiesService {
   }
 
   async updateStatus(id: string, dto: UpdatePropertyStatusDto) {
-    await this.getById(id);
+    await this.assertExists(id);
     const property = await this.prisma.property.update({
       where: { id },
       data: { status: dto.status },
@@ -208,7 +226,7 @@ export class AdminPropertiesService {
   }
 
   async replaceAmenities(id: string, dto: UpdatePropertyAmenitiesDto) {
-    await this.getById(id);
+    await this.assertExists(id);
     await this.prisma.$transaction([
       this.prisma.propertyAmenity.deleteMany({ where: { propertyId: id } }),
       this.prisma.propertyAmenity.createMany({
@@ -222,7 +240,7 @@ export class AdminPropertiesService {
   }
 
   async replacePolicies(id: string, dto: UpdatePropertyPoliciesDto) {
-    await this.getById(id);
+    await this.assertExists(id);
     await this.prisma.$transaction([
       this.prisma.propertyPolicy.deleteMany({ where: { propertyId: id } }),
       this.prisma.propertyPolicy.createMany({
@@ -242,7 +260,7 @@ export class AdminPropertiesService {
     file: Express.Multer.File,
     type = 'PROPERTY',
   ) {
-    await this.getById(propertyId);
+    await this.assertExists(propertyId);
     const url = await this.s3.uploadPropertyImage(propertyId, file);
     const count = await this.prisma.propertyImage.count({
       where: { propertyId },
@@ -256,6 +274,14 @@ export class AdminPropertiesService {
       },
     });
     return { ...image, url: await this.s3.toDisplayUrl(image.url) };
+  }
+
+  private async assertExists(id: string): Promise<void> {
+    const row = await this.prisma.property.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!row) throw new NotFoundException('Property not found');
   }
 
   private async withSignedImages<T extends { images: { url: string }[] }>(
