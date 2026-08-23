@@ -1,0 +1,47 @@
+name: Deploy AlterStay API
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+concurrency:
+  group: alterstay-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+
+          script: |
+            set -e
+
+            echo "Starting deployment..."
+
+            cd /root/apps/alterstay-api
+
+            echo "Updating source..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "Installing dependencies..."
+            npm ci
+
+            echo "Building application..."
+            npm run build
+
+            echo "Reloading application..."
+            pm2 reload alterstay-api
+
+            echo "Deployment completed successfully."
