@@ -187,6 +187,66 @@ export class CreateAmenityDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @IsOptional()
+  @IsString()
+  icon?: string;
+}
+
+export class CreateCityDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+}
+
+export class UpdateCityDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+}
+
+export class CreateAreaDto {
+  @IsString()
+  name!: string;
+}
+
+export class UpdateAreaDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+}
+
+export class UpdateAdminBookingDto {
+  @IsOptional()
+  @IsString()
+  guestFirstName?: string;
+
+  @IsOptional()
+  @IsString()
+  guestLastName?: string;
+
+  @IsOptional()
+  @IsString()
+  guestPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  guestEmail?: string;
 }
 
 export class CreateRoomTypeDto {

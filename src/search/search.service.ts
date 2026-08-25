@@ -32,6 +32,7 @@ type AvailabilityResult = {
   minTotalPrice: number | null;
   availableRoomTypeCount: number;
   available: boolean;
+  remainingRooms: number | null;
 };
 
 @Injectable()
@@ -264,6 +265,7 @@ export class SearchService {
         id: a.amenity.id,
         name: a.amenity.name,
         category: a.amenity.category,
+        icon: a.amenity.icon,
       })),
       policies: property.policies.map((p) => ({
         id: p.id,
@@ -425,12 +427,14 @@ export class SearchService {
               area: property.area?.name ?? address?.city,
               state: address?.state,
               country: address?.country,
+              postalCode: address?.postalCode ?? undefined,
               imageUrls,
               tags: property.tags.map((t) => ({
                 code: t.tag.code,
                 name: t.tag.name,
               })),
               amenities: property.amenities.map((a) => a.amenity.name),
+              remainingRooms: availability.remainingRooms,
               minTotalPrice,
               minPricePerNight,
               estimatedTaxes:
@@ -455,7 +459,24 @@ export class SearchService {
 
     results = this.sortResults(results, query.sortBy ?? 'recommended');
 
-    return { results, count: results.length };
+    const reviewCounts = results.length
+      ? await this.prisma.review.groupBy({
+          by: ['propertyId'],
+          where: { propertyId: { in: results.map((r) => r.id) } },
+          _count: { _all: true },
+        })
+      : [];
+    const reviewCountByProperty = new Map(
+      reviewCounts.map((row) => [row.propertyId, row._count._all]),
+    );
+
+    return {
+      results: results.map((result) => ({
+        ...result,
+        reviewCount: reviewCountByProperty.get(result.id) ?? 0,
+      })),
+      count: results.length,
+    };
   }
 
   private computeAvailability(
@@ -476,22 +497,26 @@ export class SearchService {
         minTotalPrice: null,
         availableRoomTypeCount: roomTypes.length,
         available: roomTypes.length > 0,
+        remainingRooms: null,
       };
     }
 
     const minOccupancy = Math.ceil(guestCount / roomsNeeded);
     let bestPrice: number | null = null;
     let availableRoomTypeCount = 0;
+    let remainingRooms: number | null = null;
 
     for (const roomType of roomTypes) {
       if (roomType.maxOccupancy < minOccupancy) continue;
 
+      const nightFree: number[] = [];
       const inventoryOk = nights.every((night) => {
         const row = roomType.inventory.find(
           (inv) => inv.date.getTime() === night.getTime(),
         );
         if (!row) return false;
         const free = row.totalRooms - row.blockedRooms - row.soldRooms;
+        nightFree.push(free);
         return free >= roomsNeeded;
       });
       if (!inventoryOk) continue;
@@ -508,6 +533,11 @@ export class SearchService {
 
       if (roomTypeBest !== null) {
         availableRoomTypeCount += 1;
+        const roomTypeRemaining = Math.min(...nightFree);
+        remainingRooms =
+          remainingRooms === null
+            ? roomTypeRemaining
+            : remainingRooms + roomTypeRemaining;
         if (bestPrice === null || roomTypeBest < bestPrice) {
           bestPrice = roomTypeBest;
         }
@@ -518,6 +548,7 @@ export class SearchService {
       minTotalPrice: bestPrice,
       availableRoomTypeCount,
       available: availableRoomTypeCount > 0,
+      remainingRooms,
     };
   }
 

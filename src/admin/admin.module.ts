@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { BookingsModule } from '../bookings/bookings.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AdminBookingsController } from './bookings/admin-bookings.controller';
+import { AdminBookingsService } from './bookings/admin-bookings.service';
 import { AdminCatalogController } from './catalog/admin-catalog.controller';
 import { AdminInventoryController } from './inventory/admin-inventory.controller';
 import { AdminInventoryService } from './inventory/admin-inventory.service';
@@ -12,9 +15,10 @@ import { AdminRoomsController } from './rooms/admin-rooms.controller';
 import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
-  imports: [PrismaModule, UploadsModule],
+  imports: [PrismaModule, UploadsModule, BookingsModule],
   controllers: [
     AdminCatalogController,
+    AdminBookingsController,
     AdminPropertiesController,
     AdminRoomTypesController,
     AdminRoomsController,
@@ -25,6 +29,7 @@ import { UploadsModule } from './uploads/uploads.module';
     AdminPropertiesService,
     AdminInventoryService,
     AdminRatePlansService,
+    AdminBookingsService,
   ],
 })
 export class AdminModule {}

@@ -16,4 +16,12 @@ export function eachNight(start: string, end: string): Date[] {
   return nights;
 }
 
+export function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export { DEFAULT_ORG_ID };
