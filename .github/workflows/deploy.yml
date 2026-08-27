@@ -27,6 +27,8 @@ jobs:
           script: |
             set -e
 
+            source ~/.nvm/nvm.sh
+            
             echo "Starting deployment..."
 
             cd /var/www/alterstay-api
