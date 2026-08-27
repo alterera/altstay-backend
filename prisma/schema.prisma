@@ -83,6 +83,7 @@ model User {
   userRoles        UserRole[]
   organizationMembers OrganizationMember[]
   reservations        Reservation[]
+  bookingQuotes       BookingQuote[]
 
   @@map("users")
 }
@@ -341,6 +342,7 @@ model Property {
   ratePlans    RatePlan[]
   reservations Reservation[]
   tags         PropertyTagAssignment[]
+  bookingQuotes BookingQuote[]
 
   @@index([organizationId])
   @@index([status])
@@ -694,6 +696,29 @@ model Reservation {
   @@index([userId])
   @@index([propertyId, status])
   @@map("reservations")
+}
+
+model BookingQuote {
+  id         String    @id @default(uuid()) @db.Uuid
+  token      String    @unique
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  propertyId String    @db.Uuid
+  property   Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  roomTypeId String    @db.Uuid
+  ratePlanId String    @db.Uuid
+  checkIn    DateTime  @db.Date
+  checkOut   DateTime  @db.Date
+  rooms      Int
+  adults     Int
+  quoteJson  Json
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("booking_quotes")
 }
 
 /// Migration 010: append-only audit of reservation status changes. Written in the

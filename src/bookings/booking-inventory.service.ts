@@ -83,6 +83,57 @@ export class BookingInventoryService {
   }
 
   /**
+   * Read-only availability check for quotes and intents. Does not lock inventory.
+   */
+  async readAvailability(
+    tx: PricingClient,
+    roomTypeId: string,
+    nights: Date[],
+    roomsNeeded: number,
+    now: Date = new Date(),
+  ): Promise<{ available: boolean; remainingRooms: number }> {
+    const dateStrings = nights.map(toUtcDateString);
+    const rows = await tx.roomInventory.findMany({
+      where: {
+        roomTypeId,
+        date: { in: nights },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    if (rows.length !== nights.length) {
+      return { available: false, remainingRooms: 0 };
+    }
+
+    const heldByDate = await this.activeHoldQuantities(
+      tx,
+      roomTypeId,
+      nights,
+      now,
+    );
+
+    let minFree = Number.POSITIVE_INFINITY;
+    for (const date of dateStrings) {
+      const row = rows.find((entry) => toUtcDateString(entry.date) === date);
+      if (!row) return { available: false, remainingRooms: 0 };
+      const heldRooms = heldByDate.get(date) ?? 0;
+      const freeRooms = computeFreeRooms({
+        totalRooms: row.totalRooms,
+        blockedRooms: row.blockedRooms,
+        soldRooms: row.soldRooms,
+        heldRooms,
+      });
+      minFree = Math.min(minFree, freeRooms);
+    }
+
+    const remainingRooms = Number.isFinite(minFree) ? Math.max(0, minFree) : 0;
+    return {
+      available: remainingRooms >= roomsNeeded,
+      remainingRooms,
+    };
+  }
+
+  /**
    * The locking half of {@link lockAndAssertAvailable}, reporting shortfalls
    * instead of throwing.
    *

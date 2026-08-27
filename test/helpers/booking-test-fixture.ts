@@ -308,6 +308,29 @@ export class BookingFixture {
     }
   }
 
+  intentBody(overrides: Record<string, unknown> = {}) {
+    return {
+      propertySlug: this.propertySlug,
+      roomTypeId: this.roomTypeId,
+      ratePlanId: this.ratePlanId,
+      checkIn: this.checkIn,
+      checkOut: this.checkOut,
+      rooms: 1,
+      adults: 2,
+      ...overrides,
+    };
+  }
+
+  async createIntent(
+    user: TestUser,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return this.http
+      .post('/bookings/intent')
+      .set('Authorization', `Bearer ${user.token}`)
+      .send(this.intentBody(overrides));
+  }
+
   bookingBody(overrides: Record<string, unknown> = {}) {
     return {
       propertySlug: this.propertySlug,
@@ -327,16 +350,40 @@ export class BookingFixture {
     };
   }
 
-  postBooking(
+  async postBooking(
     user: TestUser,
     body: Record<string, unknown> = this.bookingBody(),
     idempotencyKey: string = randomUUID(),
   ) {
+    let payload = body;
+    if (!payload.quoteToken) {
+      const intent = await this.createIntent(user, {
+        propertySlug: payload.propertySlug,
+        roomTypeId: payload.roomTypeId,
+        ratePlanId: payload.ratePlanId,
+        checkIn: payload.checkIn,
+        checkOut: payload.checkOut,
+        rooms: payload.rooms,
+        adults: payload.adults,
+      });
+      if (intent.status < 200 || intent.status >= 300) {
+        return request(this.app.getHttpServer())
+          .post('/bookings')
+          .set('Authorization', `Bearer ${user.token}`)
+          .set('Idempotency-Key', idempotencyKey)
+          .send(payload);
+      }
+      payload = {
+        ...payload,
+        quoteToken: (intent.body as { quoteToken: string }).quoteToken,
+      };
+    }
+
     return request(this.app.getHttpServer())
       .post('/bookings')
       .set('Authorization', `Bearer ${user.token}`)
       .set('Idempotency-Key', idempotencyKey)
-      .send(body);
+      .send(payload);
   }
 
   get http() {
@@ -393,6 +440,9 @@ export class BookingFixture {
         where: { userId: { in: userIds } },
       });
       await this.prisma.bookingIdempotency.deleteMany({
+        where: { userId: { in: userIds } },
+      });
+      await this.prisma.bookingQuote.deleteMany({
         where: { userId: { in: userIds } },
       });
     }

@@ -1,6 +1,11 @@
 import { Prisma, ReservationStatus } from '../prisma/client';
 
-export const BOOKING_LIST_TABS = ['ongoing', 'upcoming', 'cancelled'] as const;
+export const BOOKING_LIST_TABS = [
+  'pending',
+  'ongoing',
+  'upcoming',
+  'cancelled',
+] as const;
 export type BookingListTab = (typeof BOOKING_LIST_TABS)[number];
 
 export function startOfTodayUtc(from = new Date()): Date {
@@ -20,6 +25,12 @@ export function buildBookingTabWhere(
   ];
 
   switch (tab) {
+    case 'pending':
+      return {
+        status: ReservationStatus.PAYMENT_PENDING,
+        checkOut: { gt: today },
+      };
+
     case 'ongoing':
       return {
         status: ReservationStatus.CONFIRMED,
@@ -29,15 +40,8 @@ export function buildBookingTabWhere(
 
     case 'upcoming':
       return {
-        status: { notIn: [...cancelledStatuses, ReservationStatus.COMPLETED] },
-        checkOut: { gt: today },
-        NOT: {
-          AND: [
-            { status: ReservationStatus.CONFIRMED },
-            { checkIn: { lte: today } },
-            { checkOut: { gt: today } },
-          ],
-        },
+        status: ReservationStatus.CONFIRMED,
+        checkIn: { gt: today },
       };
 
     case 'cancelled':

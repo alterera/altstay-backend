@@ -404,6 +404,26 @@ describe('Bookings API (e2e)', () => {
 
       expect(listOf(response).total).toBe(0);
     });
+
+    it('puts unpaid bookings in pending, not upcoming', async () => {
+      const pending = await fixture.http
+        .get('/bookings/me?tab=pending')
+        .set('Authorization', `Bearer ${fixture.users[0].token}`);
+
+      expect(pending.status).toBe(200);
+      expect(listOf(pending).total).toBeGreaterThan(0);
+      expect(
+        listOf(pending).results.every(
+          (booking) => booking.status === 'PAYMENT_PENDING',
+        ),
+      ).toBe(true);
+
+      const upcoming = await fixture.http
+        .get('/bookings/me?tab=upcoming')
+        .set('Authorization', `Bearer ${fixture.users[0].token}`);
+
+      expect(listOf(upcoming).total).toBe(0);
+    });
   });
 
   describe('rate limiting', () => {

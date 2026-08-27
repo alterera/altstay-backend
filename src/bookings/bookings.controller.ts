@@ -16,6 +16,7 @@ import { RateLimitService } from '../auth/rate-limit/rate-limit.service';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { QuoteSelectionDto } from './dto/quote-selection.dto';
 
 type AuthedRequest = Request & { user: { id: string } };
 
@@ -28,6 +29,11 @@ export class BookingsController {
     private readonly bookings: BookingsService,
     private readonly rateLimit: RateLimitService,
   ) {}
+
+  @Post('intent')
+  createIntent(@Req() req: AuthedRequest, @Body() dto: QuoteSelectionDto) {
+    return this.bookings.createIntent(req.user.id, dto);
+  }
 
   @Post()
   create(
@@ -54,6 +60,14 @@ export class BookingsController {
   @Get('me')
   listMine(@Req() req: AuthedRequest, @Query() query: ListBookingsQueryDto) {
     return this.bookings.listForUser(req.user.id, query);
+  }
+
+  @Post(':reference/extend-hold')
+  extendHold(
+    @Req() req: AuthedRequest,
+    @Param('reference') reference: string,
+  ) {
+    return this.bookings.tryExtendHold(req.user.id, reference);
   }
 
   @Get(':reference')

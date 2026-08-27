@@ -10,12 +10,15 @@ import { BookingNumberService } from './booking-number.service';
 import { BookingValidationService } from './booking-validation.service';
 import { BookingsController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
+import { QuotesController } from './quotes.controller';
+import { QuotesService } from './quotes.service';
 
 @Module({
   imports: [PrismaModule, PricingModule, AuthModule, UploadsModule],
-  controllers: [BookingsController],
+  controllers: [BookingsController, QuotesController],
   providers: [
     BookingsService,
+    QuotesService,
     BookingValidationService,
     BookingInventoryService,
     BookingNumberService,

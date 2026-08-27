@@ -94,4 +94,8 @@ export class CreateBookingDto {
   @ValidateNested()
   @Type(() => BusinessBookingDto)
   businessBooking?: BusinessBookingDto;
+
+  @IsString()
+  @IsNotEmpty()
+  quoteToken!: string;
 }

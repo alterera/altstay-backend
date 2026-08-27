@@ -36,6 +36,7 @@ function dto(overrides: Partial<CreateBookingDto> = {}): CreateBookingDto {
     rooms: 1,
     adults: 2,
     guest: { firstName: 'Asha' },
+    quoteToken: 'test-quote-token',
     ...overrides,
   };
 }

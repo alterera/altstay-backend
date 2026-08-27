@@ -16,14 +16,19 @@ import { assertTransition } from './booking-lifecycle';
 import { buildBookingTabWhere } from './booking-list.filters';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { QuoteSelectionDto } from './dto/quote-selection.dto';
 import {
   BOOKING_INCLUDE,
   BookingResponse,
   toBookingResponse,
 } from './dto/booking-response.dto';
+import { QuotesService } from './quotes.service';
 
 /** Cashfree rejects checkout when order_expiry_time is within 15 minutes. */
-const DEFAULT_HOLD_TTL_MINUTES = 30;
+const DEFAULT_HOLD_TTL_MINUTES = 45;
+const HOLD_EXTEND_THRESHOLD_MS = 20 * 60 * 1000;
+const HOLD_EXTEND_BY_MS = 15 * 60 * 1000;
+const MAX_HOLD_MS = 60 * 60 * 1000;
 /** Only ever consumed by an astronomically unlikely reservation number clash. */
 const CREATE_ATTEMPTS = 3;
 
@@ -40,7 +45,66 @@ export class BookingsService {
     private readonly inventory: BookingInventoryService,
     private readonly bookingNumber: BookingNumberService,
     private readonly idempotency: BookingIdempotencyService,
+    private readonly quotes: QuotesService,
   ) {}
+
+  createIntent(userId: string, dto: QuoteSelectionDto) {
+    return this.quotes.createIntent(userId, dto);
+  }
+
+  /**
+   * Extends an active payment hold once when the guest retries near expiry.
+   * Returns the updated hold expiry, or null when no extension was applied.
+   */
+  async tryExtendHold(
+    userId: string,
+    reference: string,
+  ): Promise<Date | null> {
+    const reservation = await this.prisma.reservation.findUnique({
+      where: { reservationNumber: reference },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        holdExpiresAt: true,
+        createdAt: true,
+      },
+    });
+
+    if (!reservation || reservation.userId !== userId) {
+      throw new NotFoundException('Booking not found');
+    }
+    if (
+      reservation.status !== ReservationStatus.PAYMENT_PENDING ||
+      !reservation.holdExpiresAt
+    ) {
+      return null;
+    }
+
+    const now = Date.now();
+    const holdExpiresAt = reservation.holdExpiresAt.getTime();
+    const remaining = holdExpiresAt - now;
+    if (remaining > HOLD_EXTEND_THRESHOLD_MS) {
+      return reservation.holdExpiresAt;
+    }
+
+    const maxHoldUntil = reservation.createdAt.getTime() + MAX_HOLD_MS;
+    const proposed = Math.min(holdExpiresAt + HOLD_EXTEND_BY_MS, maxHoldUntil);
+    if (proposed <= now) return null;
+
+    const updated = await this.prisma.reservation.update({
+      where: { id: reservation.id },
+      data: { holdExpiresAt: new Date(proposed) },
+      select: { holdExpiresAt: true },
+    });
+
+    await this.prisma.inventoryHold.updateMany({
+      where: { reservationId: reservation.id },
+      data: { expiresAt: updated.holdExpiresAt! },
+    });
+
+    return updated.holdExpiresAt;
+  }
 
   get holdTtlMs(): number {
     const minutes = Number(
@@ -66,7 +130,8 @@ export class BookingsService {
     dto: CreateBookingDto,
     idempotencyKey: string,
   ): Promise<BookingResponse> {
-    const validated = await this.validation.validate(dto);
+    const { quoteRow, quote, validated } =
+      await this.quotes.loadConsumableQuote(userId, dto.quoteToken, dto);
 
     const claim = await this.idempotency.claim(
       userId,
@@ -79,9 +144,15 @@ export class BookingsService {
     }
 
     try {
-      return await this.createWithRetry(userId, dto, validated, claim.claimId);
+      return await this.createWithRetry(
+        userId,
+        dto,
+        validated,
+        claim.claimId,
+        quote,
+        quoteRow.id,
+      );
     } catch (error) {
-      // Free the key so the client can correct the problem and retry with it.
       await this.idempotency.release(claim.claimId);
       throw error;
     }
@@ -92,10 +163,19 @@ export class BookingsService {
     dto: CreateBookingDto,
     validated: ValidatedBooking,
     claimId: string,
+    frozenQuote: Quote,
+    quoteId: string,
   ): Promise<BookingResponse> {
     for (let attempt = 1; attempt <= CREATE_ATTEMPTS; attempt += 1) {
       try {
-        return await this.createInTransaction(userId, dto, validated, claimId);
+        return await this.createInTransaction(
+          userId,
+          dto,
+          validated,
+          claimId,
+          frozenQuote,
+          quoteId,
+        );
       } catch (error) {
         if (attempt < CREATE_ATTEMPTS && this.isReservationNumberClash(error)) {
           this.logger.warn(
@@ -115,6 +195,8 @@ export class BookingsService {
     dto: CreateBookingDto,
     validated: ValidatedBooking,
     claimId: string,
+    quote: Quote,
+    quoteId: string,
   ): Promise<BookingResponse> {
     const { property, roomType, ratePlan, nights, checkIn, checkOut, rooms } =
       validated;
@@ -129,15 +211,6 @@ export class BookingsService {
           nights,
           rooms,
           now,
-        );
-
-        // Authoritative price: read under the same locks that guarantee the
-        // rooms, so the amount cannot be based on a stale pre-check.
-        const quote = await this.pricing.loadAndQuote(
-          tx,
-          ratePlan.id,
-          nights,
-          rooms,
         );
 
         const reservationNumber = await this.bookingNumber.generateUnique(
@@ -210,6 +283,7 @@ export class BookingsService {
         // Same transaction as the reservation: a committed booking always has a
         // committed claim, so a retried request can never create a second one.
         await this.idempotency.markCompleted(tx, claimId, created.id);
+        await this.quotes.markQuoteConsumed(tx, quoteId);
 
         return created;
       },

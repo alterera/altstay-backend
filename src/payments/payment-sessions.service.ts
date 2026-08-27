@@ -14,6 +14,7 @@ import {
   PaymentServiceRejectedError,
 } from './payment-service.client';
 import { PaymentsConfig } from './payments.config';
+import { BookingsService } from '../bookings/bookings.service';
 import {
   LockedReservation,
   lockReservationByNumber,
@@ -70,12 +71,14 @@ export class PaymentSessionsService {
     private readonly prisma: PrismaService,
     private readonly client: PaymentServiceClient,
     private readonly config: PaymentsConfig,
+    private readonly bookings: BookingsService,
   ) {}
 
   async createSession(
     userId: string,
     reference: string,
   ): Promise<PaymentSessionResponse> {
+    await this.bookings.tryExtendHold(userId, reference);
     const prepared = await this.prepareAttempt(userId, reference);
 
     let session: CreateSessionResponse;
