@@ -65,6 +65,14 @@ model User {
   mobileVerifiedAt DateTime?
   lastLoginAt      DateTime?
 
+  gender            String?
+  dateOfBirth       DateTime? @db.Date
+  cityOfResidence   String?
+  referralCode      String?   @unique
+  alterCashBalance  Decimal   @default(0) @db.Decimal(12, 2)
+  membershipTier    String    @default("Alterstay Member")
+  membershipExpiresAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

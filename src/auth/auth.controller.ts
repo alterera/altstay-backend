@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -14,6 +15,7 @@ import {
   RequestOtpDto,
   VerifyOtpDto,
 } from './dto/auth.dto';
+import { UpdatePasswordDto, UpdateProfileDto } from './dto/profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -54,6 +56,24 @@ export class AuthController {
   @Get('me')
   me(@Req() req: Request & { user: { id: string } }) {
     return this.authService.me(req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('me')
+  updateMe(
+    @Req() req: Request & { user: { id: string } },
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(req.user.id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me/password')
+  updatePassword(
+    @Req() req: Request & { user: { id: string } },
+    @Body() dto: UpdatePasswordDto,
+  ) {
+    return this.authService.updatePassword(req.user.id, dto);
   }
 
   private meta(req: Request) {

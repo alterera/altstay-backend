@@ -22,13 +22,16 @@ import {
   RequestOtpDto,
   VerifyOtpDto,
 } from './dto/auth.dto';
+import { UpdatePasswordDto, UpdateProfileDto } from './dto/profile.dto';
 import {
   generateOtp,
+  generateReferralCode,
   hashToken,
   normalizePhone,
   parseExpiry,
 } from './auth.utils';
 import { RateLimitService } from './rate-limit/rate-limit.service';
+import { WhatsappOtpService } from './whatsapp-otp.service';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
@@ -58,6 +61,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly rateLimit: RateLimitService,
+    private readonly whatsappOtp: WhatsappOtpService,
   ) {}
 
   async requestOtp(
@@ -70,9 +74,7 @@ export class AuthService {
       this.rateLimit.consume(`otp:ip:${meta.ip}`, 20, 60 * 60 * 1000);
     }
 
-    const channel: OtpChannel =
-      dto.channel ??
-      (dto.sendWhatsappOtp === false ? OtpChannel.SMS : OtpChannel.WHATSAPP);
+    const channel = OtpChannel.WHATSAPP;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { phone },
@@ -95,14 +97,17 @@ export class AuthService {
       },
     });
 
-    // OTP delivery is stubbed — always print to the backend terminal in dev.
-    const otpMessage = `OTP for ${phone} (${purpose}/${channel}): ${otp}`;
-    this.logger.log(`${otpMessage} [dev stub]`);
+    try {
+      await this.whatsappOtp.sendOtp(phone, otp);
+    } catch (error) {
+      this.logger.error(`WhatsApp OTP delivery failed for ${phone}`);
+      throw error;
+    }
 
     if (process.env.NODE_ENV !== 'production') {
       // eslint-disable-next-line no-console
       console.log(
-        `\n${'='.repeat(48)}\nDEV LOGIN OTP\nPhone: ${phone}\nCode:  ${otp}\nExpires in ${OTP_TTL_MS / 1000}s\n${'='.repeat(48)}\n`,
+        `\n${'='.repeat(48)}\nDEV LOGIN OTP (also sent via WhatsApp when configured)\nPhone: ${phone}\nCode:  ${otp}\nExpires in ${OTP_TTL_MS / 1000}s\n${'='.repeat(48)}\n`,
       );
     }
 
@@ -182,12 +187,18 @@ export class AuthService {
 
     let user = await this.prisma.user.findUnique({ where: { phone } });
     if (!user) {
+      const referralCode = await this.uniqueReferralCode(phone);
+      const membershipExpiresAt = new Date();
+      membershipExpiresAt.setFullYear(membershipExpiresAt.getFullYear() + 1);
+
       user = await this.prisma.user.create({
         data: {
           phone,
           status: UserStatus.ACTIVE,
           mobileVerifiedAt: verifiedAt,
           lastLoginAt: verifiedAt,
+          referralCode,
+          membershipExpiresAt,
           userRoles: {
             create: { roleId: customerRole.id },
           },
@@ -203,6 +214,9 @@ export class AuthService {
               : user.status,
           mobileVerifiedAt: user.mobileVerifiedAt ?? verifiedAt,
           lastLoginAt: verifiedAt,
+          ...(!user.referralCode
+            ? { referralCode: await this.uniqueReferralCode(user.id) }
+            : {}),
         },
       });
     }
@@ -345,21 +359,80 @@ export class AuthService {
         firstName: true,
         lastName: true,
         status: true,
+        gender: true,
+        dateOfBirth: true,
+        cityOfResidence: true,
+        referralCode: true,
+        alterCashBalance: true,
+        membershipTier: true,
+        membershipExpiresAt: true,
+        passwordHash: true,
         userRoles: { include: { role: true } },
       },
     });
     if (!user) {
       throw new UnauthorizedException();
     }
-    return {
-      id: user.id,
-      phone: user.phone,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      status: user.status,
-      roles: user.userRoles.map((ur) => ur.role.name),
-    };
+    return this.toProfileView(user);
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const data: Record<string, unknown> = {};
+    if (dto.firstName !== undefined) data.firstName = dto.firstName.trim() || null;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName.trim() || null;
+    if (dto.email !== undefined) data.email = dto.email.trim() || null;
+    if (dto.gender !== undefined) data.gender = dto.gender.trim() || null;
+    if (dto.cityOfResidence !== undefined) {
+      data.cityOfResidence = dto.cityOfResidence.trim() || null;
+    }
+    if (dto.dateOfBirth !== undefined) {
+      data.dateOfBirth = dto.dateOfBirth
+        ? new Date(`${dto.dateOfBirth}T00:00:00.000Z`)
+        : null;
+    }
+    if (dto.password) {
+      data.passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data,
+    });
+
+    return this.me(userId);
+  }
+
+  async updatePassword(userId: string, dto: UpdatePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.passwordHash) {
+      throw new BadRequestException('Set a password before changing it');
+    }
+
+    const valid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!valid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash: await bcrypt.hash(dto.newPassword, BCRYPT_ROUNDS),
+      },
+    });
+
+    return { success: true };
+  }
+
+  private async uniqueReferralCode(seed: string): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = generateReferralCode(`${seed}:${attempt}:${Date.now()}`);
+      const existing = await this.prisma.user.findUnique({
+        where: { referralCode: code },
+        select: { id: true },
+      });
+      if (!existing) return code;
+    }
+    return generateReferralCode(`${seed}:${randomBytes(8).toString('hex')}`);
   }
 
   private async issueTokens(
@@ -412,6 +485,46 @@ export class AuthService {
         userAgent: meta.userAgent,
       },
     });
+  }
+
+  private toProfileView(
+    user: {
+      id: string;
+      phone: string;
+      email: string | null;
+      firstName: string | null;
+      lastName: string | null;
+      status: UserStatus;
+      gender: string | null;
+      dateOfBirth: Date | null;
+      cityOfResidence: string | null;
+      referralCode: string | null;
+      alterCashBalance: { toString(): string } | number;
+      membershipTier: string;
+      membershipExpiresAt: Date | null;
+      passwordHash: string | null;
+      userRoles: { role: { name: string } }[];
+    },
+  ) {
+    return {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      status: user.status,
+      gender: user.gender,
+      dateOfBirth: user.dateOfBirth
+        ? user.dateOfBirth.toISOString().slice(0, 10)
+        : null,
+      cityOfResidence: user.cityOfResidence,
+      referralCode: user.referralCode,
+      alterCashBalance: Number(user.alterCashBalance),
+      membershipTier: user.membershipTier,
+      membershipExpiresAt: user.membershipExpiresAt?.toISOString() ?? null,
+      hasPassword: Boolean(user.passwordHash),
+      roles: user.userRoles.map((ur) => ur.role.name),
+    };
   }
 
   private toUserView(user: User): AuthUserView {

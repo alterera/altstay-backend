@@ -20,10 +20,12 @@ export class RequestOtpDto {
   @IsString()
   countryCode?: string;
 
+  /** @deprecated OTP is always sent via WhatsApp. Ignored if present. */
   @IsOptional()
   @IsEnum(OtpChannel)
   channel?: OtpChannel;
 
+  /** @deprecated OTP is always sent via WhatsApp. Ignored if present. */
   @IsOptional()
   @IsBoolean()
   sendWhatsappOtp?: boolean;

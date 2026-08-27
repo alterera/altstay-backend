@@ -42,6 +42,8 @@ docs/
 .env*
 .env.example
 .env.main
+.env.txt
+env.txt
 
 # AWS RDS SSL certificates
 certs/*.pem
