@@ -30,6 +30,8 @@ describe('normalizePhone', () => {
 describe('toGatewayPhoneNumber', () => {
   it('returns digits-only E.164 for WhatsApp gateway', () => {
     expect(toGatewayPhoneNumber('+919101795134')).toBe('919101795134');
-    expect(toGatewayPhoneNumber('9101795134', '+91')).toBe('919101795134');
+    expect(toGatewayPhoneNumber(normalizePhone('9101795134', '+91'))).toBe(
+      '919101795134',
+    );
   });
 });

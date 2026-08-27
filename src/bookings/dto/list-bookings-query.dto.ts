@@ -1,6 +1,10 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ReservationStatus } from '../../prisma/client';
+import {
+  BOOKING_LIST_TABS,
+  type BookingListTab,
+} from '../booking-list.filters';
 
 export class ListBookingsQueryDto {
   @IsOptional()
@@ -19,4 +23,8 @@ export class ListBookingsQueryDto {
   @IsOptional()
   @IsEnum(ReservationStatus)
   status?: ReservationStatus;
+
+  @IsOptional()
+  @IsIn(BOOKING_LIST_TABS)
+  tab?: BookingListTab;
 }

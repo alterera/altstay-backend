@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { UploadsModule } from '../admin/uploads/uploads.module';
 import { PricingModule } from '../pricing/pricing.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { BookingIdempotencyService } from './booking-idempotency.service';
@@ -11,7 +12,7 @@ import { BookingsController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
 
 @Module({
-  imports: [PrismaModule, PricingModule, AuthModule],
+  imports: [PrismaModule, PricingModule, AuthModule, UploadsModule],
   controllers: [BookingsController],
   providers: [
     BookingsService,

@@ -3,7 +3,22 @@ import { toUtcDateString } from '../booking.utils';
 import { selectPayment } from './payment-summary';
 
 export const BOOKING_INCLUDE = {
-  property: { select: { id: true, name: true, slug: true } },
+  property: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      images: {
+        select: { url: true },
+        orderBy: { sortOrder: 'asc' as const },
+        take: 1,
+      },
+      addresses: {
+        select: { city: true, latitude: true, longitude: true },
+        take: 1,
+      },
+    },
+  },
   items: true,
   guests: true,
   payments: {
@@ -39,6 +54,14 @@ export function toBookingResponse(reservation: BookingRecord) {
     property: {
       name: reservation.property.name,
       slug: reservation.property.slug,
+      city: reservation.property.addresses[0]?.city ?? null,
+      imageUrl: reservation.property.images[0]?.url ?? null,
+      latitude: reservation.property.addresses[0]?.latitude
+        ? Number(reservation.property.addresses[0].latitude)
+        : null,
+      longitude: reservation.property.addresses[0]?.longitude
+        ? Number(reservation.property.addresses[0].longitude)
+        : null,
     },
     checkIn: toUtcDateString(reservation.checkIn),
     checkOut: toUtcDateString(reservation.checkOut),

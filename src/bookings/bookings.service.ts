@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, ReservationStatus } from '../prisma/client';
+import { S3Service } from '../admin/uploads/s3.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
 import { Quote } from '../pricing/pricing.types';
@@ -12,6 +13,7 @@ import {
   ValidatedBooking,
 } from './booking-validation.service';
 import { assertTransition } from './booking-lifecycle';
+import { buildBookingTabWhere } from './booking-list.filters';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import {
@@ -32,6 +34,7 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly s3: S3Service,
     private readonly validation: BookingValidationService,
     private readonly pricing: PricingService,
     private readonly inventory: BookingInventoryService,
@@ -291,6 +294,7 @@ export class BookingsService {
 
     const where: Prisma.ReservationWhereInput = {
       userId,
+      ...(query.tab ? buildBookingTabWhere(query.tab) : {}),
       ...(query.status ? { status: query.status } : {}),
     };
 
@@ -305,12 +309,25 @@ export class BookingsService {
       }),
     ]);
 
+    const results = await Promise.all(
+      reservations.map(async (reservation) => {
+        const response = toBookingResponse(reservation);
+        if (response.property.imageUrl) {
+          response.property.imageUrl = await this.s3.toDisplayUrl(
+            response.property.imageUrl,
+          );
+        }
+        return response;
+      }),
+    );
+
     return {
-      results: reservations.map(toBookingResponse),
+      results,
       page,
       limit,
       total,
       hasMore: page * limit < total,
+      tab: query.tab ?? null,
     };
   }
 
