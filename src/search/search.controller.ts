@@ -99,4 +99,9 @@ export class SearchController {
   listPropertyTypes() {
     return this.search.listPropertyTypes();
   }
+
+  @Get('cities')
+  listCities() {
+    return this.search.listCities();
+  }
 }

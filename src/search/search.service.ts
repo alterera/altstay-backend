@@ -73,6 +73,54 @@ export class SearchService {
     });
   }
 
+  async listCities() {
+    const cities = await this.prisma.city.findMany({
+      orderBy: { name: 'asc' },
+      select: { name: true, slug: true, state: true },
+    });
+
+    return Promise.all(
+      cities.map(async (city) => {
+        const properties = await this.prisma.property.findMany({
+          where: {
+            status: PropertyStatus.ACTIVE,
+            addresses: {
+              some: { city: { equals: city.name, mode: 'insensitive' } },
+            },
+          },
+          select: { id: true },
+        });
+
+        const propertyIds = properties.map((property) => property.id);
+        let minPriceFrom: number | null = null;
+
+        if (propertyIds.length > 0) {
+          const pricing = await this.prisma.ratePrice.aggregate({
+            where: {
+              ratePlan: {
+                propertyId: { in: propertyIds },
+                status: 'ACTIVE',
+              },
+            },
+            _min: { basePrice: true },
+          });
+          minPriceFrom = pricing._min.basePrice
+            ? Number(pricing._min.basePrice)
+            : null;
+        }
+
+        return {
+          name: city.name,
+          slug: city.slug,
+          state: city.state,
+          propertyCount: properties.length,
+          minPriceFrom,
+          currency: 'INR',
+        };
+      }),
+    );
+  }
+
   async getPropertyBySlug(slug: string, query: SearchQuery) {
     const roomsNeeded = query.rooms ?? 1;
     const guestCount =
