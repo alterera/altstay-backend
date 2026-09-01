@@ -19,6 +19,20 @@ export type NightlyRate = {
   basePrice: number;
 };
 
+/** @deprecated Checkout no longer applies membership discounts — use coinEarnPreview. */
+export type MembershipDiscount = {
+  planCode: string;
+  discountPercent: number;
+  discountableAmount: number;
+  discountAmount: number;
+};
+
+export type CoinEarnPreview = {
+  planCode: string;
+  earnPercent: number;
+  earnableAmount: number;
+};
+
 export type Quote = {
   nightly: NightlyRate[];
   nights: number;
@@ -29,6 +43,15 @@ export type Quote = {
   totalAmount: number;
   currency: string;
   taxRate: number;
+  /** @deprecated Always 0 at checkout; kept for backward-compatible snapshots. */
+  membershipDiscount?: MembershipDiscount;
+  coinEarnPreview?: CoinEarnPreview;
+  coinsRedeemed?: number;
 };
 
 export type PricingClient = Prisma.TransactionClient;
+
+export type MembershipPricingContext = {
+  planCode: string;
+  discountPercent: number;
+};

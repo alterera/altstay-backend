@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AlterCashModule } from '../alter-cash/alter-cash.module';
 import { BookingsModule } from '../bookings/bookings.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminBookingsController } from './bookings/admin-bookings.controller';
@@ -15,7 +16,7 @@ import { AdminRoomsController } from './rooms/admin-rooms.controller';
 import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
-  imports: [PrismaModule, UploadsModule, BookingsModule],
+  imports: [PrismaModule, UploadsModule, BookingsModule, AlterCashModule],
   controllers: [
     AdminCatalogController,
     AdminBookingsController,

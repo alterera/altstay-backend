@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PricingService, TAX_RATE } from './pricing.service';
 import { RatePriceLike } from './pricing.types';
 
@@ -25,7 +26,10 @@ describe('PricingService', () => {
   let pricing: PricingService;
 
   beforeEach(() => {
-    pricing = new PricingService();
+    const config = {
+      get: jest.fn().mockReturnValue(undefined),
+    } as unknown as ConfigService;
+    pricing = new PricingService(config);
   });
 
   describe('estimateTaxes', () => {
@@ -113,6 +117,53 @@ describe('PricingService', () => {
 
     it.each([0, -1, 1.5])('rejects a room count of %p', (rooms) => {
       expect(() => pricing.computeQuote([price('10', 100)], rooms)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('exposes coin earn preview for members without checkout discount', () => {
+      const quote = pricing.computeQuote([price('10', 3000)], 1, {
+        planCode: 'INDIVIDUAL',
+        discountPercent: 5,
+      });
+
+      expect(quote.subtotal).toBe(3000);
+      expect(quote.discountAmount).toBe(0);
+      expect(quote.taxAmount).toBe(Math.round(3000 * TAX_RATE));
+      expect(quote.totalAmount).toBe(3000 + quote.taxAmount);
+      expect(quote.coinEarnPreview).toEqual({
+        planCode: 'INDIVIDUAL',
+        earnPercent: 5,
+        earnableAmount: 150,
+      });
+    });
+
+    it('exposes 10% coin earn preview for corporate members', () => {
+      const quote = pricing.computeQuote([price('10', 3000)], 1, {
+        planCode: 'CORPORATE',
+        discountPercent: 10,
+      });
+
+      expect(quote.discountAmount).toBe(0);
+      expect(quote.coinEarnPreview?.earnableAmount).toBe(300);
+      expect(quote.totalAmount).toBe(3000 + Math.round(3000 * TAX_RATE));
+    });
+  });
+
+  describe('applyCoinRedemption', () => {
+    it('reduces subtotal and recalculates tax', () => {
+      const base = pricing.computeQuote([price('10', 3000)], 1);
+      const quote = pricing.applyCoinRedemption(base, 500);
+
+      expect(quote.coinsRedeemed).toBe(500);
+      expect(quote.subtotal).toBe(3000);
+      expect(quote.taxAmount).toBe(Math.round(2500 * TAX_RATE));
+      expect(quote.totalAmount).toBe(2500 + quote.taxAmount);
+    });
+
+    it('rejects redemption above room subtotal', () => {
+      const base = pricing.computeQuote([price('10', 1000)], 1);
+      expect(() => pricing.applyCoinRedemption(base, 1001)).toThrow(
         BadRequestException,
       );
     });

@@ -15,8 +15,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RateLimitService } from '../auth/rate-limit/rate-limit.service';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { BookingIntentDto } from './dto/booking-intent.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
-import { QuoteSelectionDto } from './dto/quote-selection.dto';
 
 type AuthedRequest = Request & { user: { id: string } };
 
@@ -31,7 +31,7 @@ export class BookingsController {
   ) {}
 
   @Post('intent')
-  createIntent(@Req() req: AuthedRequest, @Body() dto: QuoteSelectionDto) {
+  createIntent(@Req() req: AuthedRequest, @Body() dto: BookingIntentDto) {
     return this.bookings.createIntent(req.user.id, dto);
   }
 

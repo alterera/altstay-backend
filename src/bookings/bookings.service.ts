@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, ReservationStatus } from '../prisma/client';
+import { AlterCashService } from '../alter-cash/alter-cash.service';
 import { S3Service } from '../admin/uploads/s3.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -16,7 +17,7 @@ import { assertTransition } from './booking-lifecycle';
 import { buildBookingTabWhere } from './booking-list.filters';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
-import { QuoteSelectionDto } from './dto/quote-selection.dto';
+import { BookingIntentDto } from './dto/booking-intent.dto';
 import {
   BOOKING_INCLUDE,
   BookingResponse,
@@ -46,9 +47,10 @@ export class BookingsService {
     private readonly bookingNumber: BookingNumberService,
     private readonly idempotency: BookingIdempotencyService,
     private readonly quotes: QuotesService,
+    private readonly alterCash: AlterCashService,
   ) {}
 
-  createIntent(userId: string, dto: QuoteSelectionDto) {
+  createIntent(userId: string, dto: BookingIntentDto) {
     return this.quotes.createIntent(userId, dto);
   }
 
@@ -232,6 +234,8 @@ export class BookingsService {
             discountAmount: quote.discountAmount,
             totalAmount: quote.totalAmount,
             currency: quote.currency,
+            coinsRedeemed: quote.coinsRedeemed ?? 0,
+            coinsEarnable: quote.coinEarnPreview?.earnableAmount ?? 0,
             holdExpiresAt,
             companyName: dto.businessBooking?.companyName ?? null,
             gstin: dto.businessBooking?.gstin ?? null,
@@ -285,6 +289,16 @@ export class BookingsService {
         await this.idempotency.markCompleted(tx, claimId, created.id);
         await this.quotes.markQuoteConsumed(tx, quoteId);
 
+        if ((quote.coinsRedeemed ?? 0) > 0) {
+          await this.alterCash.redeemForBooking(
+            tx,
+            userId,
+            created.id,
+            quote.coinsRedeemed!,
+            reservationNumber,
+          );
+        }
+
         return created;
       },
       { timeout: 20_000, maxWait: 15_000 },
@@ -321,6 +335,8 @@ export class BookingsService {
       taxAmount: quote.taxAmount,
       discountAmount: quote.discountAmount,
       totalAmount: quote.totalAmount,
+      coinsRedeemed: quote.coinsRedeemed ?? 0,
+      coinEarnPreview: quote.coinEarnPreview,
       quotedAt: quotedAt.toISOString(),
     };
   }
@@ -446,6 +462,7 @@ export class BookingsService {
         data: { status: ReservationStatus.EXPIRED },
       });
       await this.inventory.releaseHolds(tx, reservationId);
+      await this.alterCash.refundRedemption(tx, reservationId);
       await tx.reservationStatusHistory.create({
         data: {
           reservationId,
@@ -475,6 +492,70 @@ export class BookingsService {
       take: limit,
     });
     return rows.map((row) => row.id);
+  }
+
+  /** CONFIRMED stays past check-out, ready to mark COMPLETED. */
+  async findCompletionCandidates(
+    limit = 100,
+    today: Date = new Date(),
+  ): Promise<string[]> {
+    const cutoff = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    );
+    const rows = await this.prisma.reservation.findMany({
+      where: {
+        status: ReservationStatus.CONFIRMED,
+        checkOut: { lt: cutoff },
+      },
+      select: { id: true },
+      orderBy: { checkOut: 'asc' },
+      take: limit,
+    });
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Transitions one confirmed stay to COMPLETED and credits earnable coins.
+   *
+   * @returns true when this call performed the completion
+   */
+  async completeStay(reservationId: string): Promise<boolean> {
+    const completed = await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ status: ReservationStatus }[]>`
+        SELECT "status"
+        FROM "reservations"
+        WHERE "id" = ${reservationId}::uuid
+        FOR UPDATE
+      `;
+
+      const current = locked[0];
+      if (!current || current.status !== ReservationStatus.CONFIRMED) {
+        return false;
+      }
+
+      assertTransition(current.status, ReservationStatus.COMPLETED);
+
+      await tx.reservation.update({
+        where: { id: reservationId },
+        data: { status: ReservationStatus.COMPLETED },
+      });
+      await tx.reservationStatusHistory.create({
+        data: {
+          reservationId,
+          fromStatus: current.status,
+          toStatus: ReservationStatus.COMPLETED,
+          reason: 'CHECKOUT_PASSED',
+          actor: 'completion-cron',
+        },
+      });
+
+      return true;
+    });
+
+    if (completed) {
+      await this.alterCash.creditEarnOnComplete(reservationId);
+    }
+    return completed;
   }
 
   private isReservationNumberClash(error: unknown): boolean {

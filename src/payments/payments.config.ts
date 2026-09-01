@@ -89,6 +89,22 @@ export class PaymentsConfig {
     return `${base}?ref=${encodeURIComponent(reservationReference)}`;
   }
 
+  membershipResultUrl(purchaseId: string): string {
+    const base = this.config
+      .get<string>('MEMBERSHIP_RESULT_URL')
+      ?.replace(/\/+$/, '');
+    if (!base) {
+      const bookingBase = this.config
+        .get<string>('BOOKING_RESULT_URL')
+        ?.replace(/\/bookings\/result.*$/, '');
+      if (bookingBase) {
+        return `${bookingBase}/membership/result?ref=${encodeURIComponent(purchaseId)}`;
+      }
+      return '';
+    }
+    return `${base}?ref=${encodeURIComponent(purchaseId)}`;
+  }
+
   get isPaymentServiceConfigured(): boolean {
     return Boolean(this.paymentServiceBaseUrl && this.paymentServiceToken);
   }

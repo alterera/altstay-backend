@@ -70,7 +70,7 @@ model User {
   cityOfResidence   String?
   referralCode      String?   @unique
   alterCashBalance  Decimal   @default(0) @db.Decimal(12, 2)
-  membershipTier    String    @default("Alterstay Member")
+  membershipTier    String    @default("Free")
   membershipExpiresAt DateTime?
 
   createdAt DateTime @default(now())
@@ -84,6 +84,9 @@ model User {
   organizationMembers OrganizationMember[]
   reservations        Reservation[]
   bookingQuotes       BookingQuote[]
+  membershipPurchases MembershipPurchase[]
+  userMemberships     UserMembership[]
+  alterCashTransactions AlterCashTransaction[]
 
   @@map("users")
 }
@@ -683,6 +686,11 @@ model Reservation {
   // Migration 010: set when payment confirmation commits.
   confirmedAt DateTime?
 
+  // Migration 014: coin earn/redeem (1 coin = ₹1).
+  coinsRedeemed Decimal   @default(0) @db.Decimal(12, 2)
+  coinsEarnable Decimal   @default(0) @db.Decimal(12, 2)
+  coinsEarnedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -692,9 +700,11 @@ model Reservation {
   payments       Payment[]
   reviews        Review[]
   statusHistory  ReservationStatusHistory[]
+  alterCashTransactions AlterCashTransaction[]
 
   @@index([userId])
   @@index([propertyId, status])
+  @@index([status, checkOut])
   @@map("reservations")
 }
 
@@ -711,10 +721,11 @@ model BookingQuote {
   checkOut   DateTime  @db.Date
   rooms      Int
   adults     Int
-  quoteJson  Json
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime  @default(now())
+  quoteJson     Json
+  coinsToRedeem Int       @default(0)
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -946,4 +957,143 @@ model BookingIdempotency {
   @@index([expiresAt])
   @@index([status, createdAt])
   @@map("booking_idempotency")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 013: Membership plans, purchases, entitlements
+// ---------------------------------------------------------------------------
+
+enum MembershipPurchaseStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum UserMembershipStatus {
+  ACTIVE
+  EXPIRED
+  SUPERSEDED
+  CANCELLED
+}
+
+enum MembershipCancellationReason {
+  ADMIN
+  REFUNDED
+  UPGRADE
+}
+
+model MembershipPlan {
+  id                String   @id @default(uuid()) @db.Uuid
+  code              String   @unique
+  name              String
+  price             Decimal  @db.Decimal(12, 2)
+  durationDays      Int
+  discountPercent   Int
+  benefitsDescription String?
+  isActive          Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases     MembershipPurchase[]
+  memberships   UserMembership[]
+
+  @@map("membership_plans")
+}
+
+model MembershipPurchase {
+  id               String                   @id @default(uuid()) @db.Uuid
+  userId           String                   @db.Uuid
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  planId           String                   @db.Uuid
+  plan             MembershipPlan           @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  paymentReference String                   @unique
+  amount           Decimal                  @db.Decimal(12, 2)
+  currency         String                   @default("INR")
+  status           MembershipPurchaseStatus @default(PENDING)
+  idempotencyKey   String
+
+  providerOrderId   String?
+  providerPaymentId String?
+  paymentMethod     String?
+  failureReason     String?
+  refundReason      String?
+
+  expiresAt   DateTime
+  paidAt      DateTime?
+  failedAt    DateTime?
+  refundedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  membership UserMembership?
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@map("membership_purchases")
+}
+
+model UserMembership {
+  id         String               @id @default(uuid()) @db.Uuid
+  userId     String               @db.Uuid
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  planId     String               @db.Uuid
+  plan       MembershipPlan       @relation(fields: [planId], references: [id], onDelete: Restrict)
+  purchaseId String               @unique @db.Uuid
+  purchase   MembershipPurchase   @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+
+  status             UserMembershipStatus
+  activatedAt        DateTime
+  expiresAt          DateTime
+  cancelledAt        DateTime?
+  supersededAt       DateTime?
+  cancellationReason MembershipCancellationReason?
+
+  upgradeCreditDays  Int?
+  upgradeCreditValue Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  alterCashTransactions AlterCashTransaction[]
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@map("user_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Migration 014: Alter Cash (coins ledger)
+// ---------------------------------------------------------------------------
+
+enum AlterCashTransactionType {
+  EARN
+  REDEEM
+  REDEEM_REFUND
+  ADJUST
+}
+
+model AlterCashTransaction {
+  id               String                   @id @default(uuid()) @db.Uuid
+  userId           String                   @db.Uuid
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  type             AlterCashTransactionType
+  amount           Decimal                  @db.Decimal(12, 2)
+  balanceAfter     Decimal                  @db.Decimal(12, 2)
+  reservationId    String?                  @db.Uuid
+  reservation      Reservation?             @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  userMembershipId String?                  @db.Uuid
+  userMembership   UserMembership?          @relation(fields: [userMembershipId], references: [id], onDelete: SetNull)
+  description      String
+  createdAt        DateTime                 @default(now())
+
+  @@index([userId, createdAt])
+  @@index([reservationId])
+  @@map("alter_cash_transactions")
 }

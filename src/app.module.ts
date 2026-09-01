@@ -7,6 +7,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 import { SearchModule } from './search/search.module';
+import { MembershipModule } from './membership/membership.module';
+import { AlterCashModule } from './alter-cash/alter-cash.module';
 import { PricingModule } from './pricing/pricing.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { PaymentsModule } from './payments/payments.module';
@@ -22,6 +24,8 @@ import { PaymentsModule } from './payments/payments.module';
     PricingModule,
     BookingsModule,
     PaymentsModule,
+    MembershipModule,
+    AlterCashModule,
   ],
   controllers: [AppController],
   providers: [AppService],

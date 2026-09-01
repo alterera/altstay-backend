@@ -11,6 +11,7 @@ import { BookingsService } from './bookings.service';
 export class BookingMaintenanceService {
   private readonly logger = new Logger(BookingMaintenanceService.name);
   private expiryRunning = false;
+  private completionRunning = false;
 
   constructor(
     private readonly bookings: BookingsService,
@@ -51,6 +52,39 @@ export class BookingMaintenanceService {
       return expired;
     } finally {
       this.expiryRunning = false;
+    }
+  }
+
+  /** Daily: mark past check-outs COMPLETED and credit member coins. */
+  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  async completePastStays(): Promise<number> {
+    if (this.completionRunning) return 0;
+    this.completionRunning = true;
+
+    try {
+      const candidates = await this.bookings.findCompletionCandidates();
+      if (!candidates.length) return 0;
+
+      let completed = 0;
+      for (const reservationId of candidates) {
+        try {
+          if (await this.bookings.completeStay(reservationId)) {
+            completed += 1;
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to complete reservation ${reservationId}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        }
+      }
+
+      if (completed) {
+        this.logger.log(`Completed ${completed} reservation(s) after check-out`);
+      }
+      return completed;
+    } finally {
+      this.completionRunning = false;
     }
   }
 

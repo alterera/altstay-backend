@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -6,18 +7,19 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { Prisma } from '../prisma/client';
+import { AlterCashService } from '../alter-cash/alter-cash.service';
 import { PricingClient } from '../pricing/pricing.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
+import { MembershipService } from '../membership/membership.service';
 import { BookingInventoryService } from './booking-inventory.service';
 import { BookingValidationService } from './booking-validation.service';
+import { BookingIntentDto } from './dto/booking-intent.dto';
 import { QuoteSelectionDto } from './dto/quote-selection.dto';
 import {
   BookingIntentResponse,
   QuoteResponse,
-  deserializeQuote,
   serializeQuote,
-  type SerializedQuote,
 } from './dto/quote-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -32,6 +34,8 @@ export class QuotesService {
     private readonly validation: BookingValidationService,
     private readonly pricing: PricingService,
     private readonly inventory: BookingInventoryService,
+    private readonly membership: MembershipService,
+    private readonly alterCash: AlterCashService,
   ) {}
 
   get quoteTtlMs(): number {
@@ -53,12 +57,17 @@ export class QuotesService {
 
   async createIntent(
     userId: string,
-    dto: QuoteSelectionDto,
+    dto: BookingIntentDto,
   ): Promise<BookingIntentResponse> {
     const validated = await this.validation.validate(
       this.selectionToBookingDto(dto),
     );
-    const { quote, availability } = await this.resolveQuote(dto);
+    const coinsToRedeem = dto.coinsToRedeem ?? 0;
+    const { quote, availability } = await this.resolveQuote(
+      dto,
+      userId,
+      coinsToRedeem,
+    );
 
     if (!availability.available) {
       throw new ConflictException(
@@ -82,15 +91,21 @@ export class QuotesService {
         checkOut: validated.checkOut,
         rooms: validated.rooms,
         adults: validated.adults,
-        quoteJson: serialized,
+        quoteJson: serialized as unknown as Prisma.InputJsonValue,
+        coinsToRedeem,
         expiresAt,
       },
     });
+
+    const coinsBalance = await this.alterCash.getBalance(userId);
+    const maxCoinsRedeemable = Math.min(coinsBalance, quote.subtotal);
 
     return {
       quoteToken: token,
       expiresAt: expiresAt.toISOString(),
       quote: this.toQuoteResponse(quote, availability),
+      coinsBalance,
+      maxCoinsRedeemable,
       property: {
         name: validated.property.name,
         slug: validated.property.slug,
@@ -128,9 +143,41 @@ export class QuotesService {
     const validated = await this.validation.validate(dto);
     this.assertQuoteMatchesSelection(quoteRow, validated);
 
+    const membershipContext = await this.membership.getActiveMembership(userId);
+    let quote = await this.prisma.$transaction((tx) =>
+      this.pricing.loadAndQuote(
+        tx,
+        validated.ratePlan.id,
+        validated.nights,
+        validated.rooms,
+        membershipContext
+          ? {
+              planCode: membershipContext.planCode,
+              discountPercent: membershipContext.discountPercent,
+            }
+          : undefined,
+      ),
+    );
+
+    const coinsToRedeem = quoteRow.coinsToRedeem ?? 0;
+    if (coinsToRedeem > 0) {
+      const balance = await this.alterCash.getBalance(userId);
+      const preview = this.alterCash.previewRedemption(
+        balance,
+        quote.subtotal,
+        coinsToRedeem,
+      );
+      if (!preview.valid) {
+        throw new BadRequestException(
+          preview.reason ?? 'Invalid coin redemption',
+        );
+      }
+      quote = this.pricing.applyCoinRedemption(quote, preview.applied);
+    }
+
     return {
       quoteRow,
-      quote: deserializeQuote(quoteRow.quoteJson as SerializedQuote),
+      quote,
       validated,
     };
   }
@@ -142,19 +189,48 @@ export class QuotesService {
     });
   }
 
-  private async resolveQuote(dto: QuoteSelectionDto) {
+  private async resolveQuote(
+    dto: QuoteSelectionDto,
+    userId?: string,
+    coinsToRedeem = 0,
+  ) {
     const validated = await this.validation.validate(
       this.selectionToBookingDto(dto),
     );
 
-    const quote = await this.prisma.$transaction((tx) =>
+    const membershipContext = userId
+      ? await this.membership.getActiveMembership(userId)
+      : null;
+
+    let quote = await this.prisma.$transaction((tx) =>
       this.pricing.loadAndQuote(
         tx,
         validated.ratePlan.id,
         validated.nights,
         validated.rooms,
+        membershipContext
+          ? {
+              planCode: membershipContext.planCode,
+              discountPercent: membershipContext.discountPercent,
+            }
+          : undefined,
       ),
     );
+
+    if (userId && coinsToRedeem > 0) {
+      const balance = await this.alterCash.getBalance(userId);
+      const preview = this.alterCash.previewRedemption(
+        balance,
+        quote.subtotal,
+        coinsToRedeem,
+      );
+      if (!preview.valid) {
+        throw new BadRequestException(
+          preview.reason ?? 'Invalid coin redemption',
+        );
+      }
+      quote = this.pricing.applyCoinRedemption(quote, preview.applied);
+    }
 
     const availability = await this.inventory.readAvailability(
       this.prisma,
@@ -185,6 +261,8 @@ export class QuotesService {
       available: availability.available,
       remainingRooms: availability.remainingRooms,
       expiresAt,
+      coinEarnPreview: quote.coinEarnPreview,
+      coinsRedeemed: quote.coinsRedeemed,
     };
   }
 

@@ -1,5 +1,7 @@
 import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
+import { isMembershipPaymentReference } from '../membership/membership.utils';
+import { MembershipPaymentConfirmationService } from '../membership/membership-payment-confirmation.service';
 import { PaymentNotificationDto } from './dto/payment-notification.dto';
 import { ServiceSignatureGuard } from './guards/service-signature.guard';
 import { PaymentConfirmationService } from './payment-confirmation.service';
@@ -15,7 +17,10 @@ import { PaymentConfirmationService } from './payment-confirmation.service';
 @Controller('internal/payments')
 @UseGuards(ServiceSignatureGuard)
 export class InternalPaymentsController {
-  constructor(private readonly confirmation: PaymentConfirmationService) {}
+  constructor(
+    private readonly confirmation: PaymentConfirmationService,
+    private readonly membershipConfirmation: MembershipPaymentConfirmationService,
+  ) {}
 
   /**
    * The status code is the retry contract for the sender, so it is set explicitly
@@ -30,6 +35,12 @@ export class InternalPaymentsController {
     @Body() dto: PaymentNotificationDto,
     @Res({ passthrough: true }) res: Response,
   ) {
+    if (isMembershipPaymentReference(dto.paymentReference)) {
+      const result = await this.membershipConfirmation.handleNotification(dto);
+      res.status(result.httpStatus);
+      return { ...result.body, duplicate: result.body.duplicate };
+    }
+
     const result = await this.confirmation.handleNotification(dto);
     res.status(result.httpStatus);
     return result.body;

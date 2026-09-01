@@ -188,8 +188,6 @@ export class AuthService {
     let user = await this.prisma.user.findUnique({ where: { phone } });
     if (!user) {
       const referralCode = await this.uniqueReferralCode(phone);
-      const membershipExpiresAt = new Date();
-      membershipExpiresAt.setFullYear(membershipExpiresAt.getFullYear() + 1);
 
       user = await this.prisma.user.create({
         data: {
@@ -198,7 +196,7 @@ export class AuthService {
           mobileVerifiedAt: verifiedAt,
           lastLoginAt: verifiedAt,
           referralCode,
-          membershipExpiresAt,
+          membershipTier: 'Free',
           userRoles: {
             create: { roleId: customerRole.id },
           },

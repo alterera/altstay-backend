@@ -77,7 +77,43 @@ const CITIES_WITH_AREAS = [
   },
 ] as const;
 
+const MEMBERSHIP_PLANS = [
+  {
+    code: 'INDIVIDUAL',
+    name: 'AlterStay Member',
+    price: 999,
+    durationDays: 365,
+    discountPercent: 5,
+    benefitsDescription:
+      'Earn 5% back in coins on eligible room bookings. Applies to your account only.',
+  },
+  {
+    code: 'CORPORATE',
+    name: 'AlterStay Corporate',
+    price: 2599,
+    durationDays: 365,
+    discountPercent: 10,
+    benefitsDescription:
+      'Earn 10% back in coins on eligible room bookings. Applies to your account only — company-wide employee benefits coming soon.',
+  },
+] as const;
+
 async function main() {
+  for (const plan of MEMBERSHIP_PLANS) {
+    await prisma.membershipPlan.upsert({
+      where: { code: plan.code },
+      update: {
+        name: plan.name,
+        price: plan.price,
+        durationDays: plan.durationDays,
+        discountPercent: plan.discountPercent,
+        benefitsDescription: plan.benefitsDescription,
+        isActive: true,
+      },
+      create: plan,
+    });
+  }
+
   for (const role of PLATFORM_ROLES) {
     await prisma.role.upsert({
       where: { name: role.name },

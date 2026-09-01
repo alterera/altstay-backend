@@ -1,9 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { UploadsModule } from '../admin/uploads/uploads.module';
+import { AlterCashModule } from '../alter-cash/alter-cash.module';
+import { MembershipModule } from '../membership/membership.module';
 import { PricingModule } from '../pricing/pricing.module';
-import { PrismaModule } from '../prisma/prisma.module';
-import { BookingIdempotencyService } from './booking-idempotency.service';
+import { PrismaModule } from '../prisma/prisma.module';import { BookingIdempotencyService } from './booking-idempotency.service';
 import { BookingInventoryService } from './booking-inventory.service';
 import { BookingMaintenanceService } from './booking-maintenance.service';
 import { BookingNumberService } from './booking-number.service';
@@ -14,8 +15,14 @@ import { QuotesController } from './quotes.controller';
 import { QuotesService } from './quotes.service';
 
 @Module({
-  imports: [PrismaModule, PricingModule, AuthModule, UploadsModule],
-  controllers: [BookingsController, QuotesController],
+  imports: [
+    PrismaModule,
+    PricingModule,
+    AuthModule,
+    UploadsModule,
+    AlterCashModule,
+    forwardRef(() => MembershipModule),
+  ],  controllers: [BookingsController, QuotesController],
   providers: [
     BookingsService,
     QuotesService,

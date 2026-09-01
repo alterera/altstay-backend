@@ -6,6 +6,7 @@ import {
 import { Prisma, ReservationStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BookingInventoryService } from '../../bookings/booking-inventory.service';
+import { AlterCashService } from '../../alter-cash/alter-cash.service';
 import { eachNight } from '../admin.utils';
 import { toUtcDateString } from '../../bookings/booking.utils';
 import { assertTransition } from '../../bookings/booking-lifecycle';
@@ -42,6 +43,7 @@ export class AdminBookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: BookingInventoryService,
+    private readonly alterCash: AlterCashService,
   ) {}
 
   async list(query: ListBookingsQueryDto) {
@@ -156,6 +158,7 @@ export class AdminBookingsService {
         where: { id: reservation.id },
         data: { status: ReservationStatus.CANCELLED, holdExpiresAt: null },
       });
+      await this.alterCash.refundRedemption(tx, reservation.id);
       await tx.reservationStatusHistory.create({
         data: {
           reservationId: reservation.id,

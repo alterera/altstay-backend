@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
+  MembershipPricingContext,
   NightlyRate,
   PricingClient,
   Quote,
@@ -19,6 +21,8 @@ export const DEFAULT_CURRENCY = 'INR';
 @Injectable()
 export class PricingService {
   readonly taxRate = TAX_RATE;
+
+  constructor(private readonly config: ConfigService) {}
 
   estimateTaxes(amount: number): number {
     return Math.round(amount * TAX_RATE);
@@ -50,8 +54,15 @@ export class PricingService {
    * Pure quote math over already-loaded price rows. `prices` must be ordered by
    * night (use `matchNights`). Kept free of I/O so search can price many plans
    * from a single bulk query instead of one query per plan.
+   *
+   * Members pay full room price + tax at checkout. Membership benefit is
+   * informational `coinEarnPreview` (credited after stay COMPLETED).
    */
-  computeQuote(prices: RatePriceLike[], rooms: number): Quote {
+  computeQuote(
+    prices: RatePriceLike[],
+    rooms: number,
+    membership?: MembershipPricingContext,
+  ): Quote {
     if (!prices.length) {
       throw new BadRequestException('Cannot price a stay with no nights');
     }
@@ -66,8 +77,20 @@ export class PricingService {
 
     const perRoom = nightly.reduce((sum, night) => sum + night.basePrice, 0);
     const subtotal = perRoom * rooms;
+
+    let coinEarnPreview: Quote['coinEarnPreview'];
+    if (membership && membership.discountPercent > 0) {
+      coinEarnPreview = {
+        planCode: membership.planCode,
+        earnPercent: membership.discountPercent,
+        earnableAmount: Math.round(
+          (subtotal * membership.discountPercent) / 100,
+        ),
+      };
+    }
+
     const taxAmount = this.estimateTaxes(subtotal);
-    const discountAmount = 0;
+    const totalAmount = subtotal + taxAmount;
 
     return {
       nightly,
@@ -75,10 +98,42 @@ export class PricingService {
       rooms,
       subtotal,
       taxAmount,
-      discountAmount,
-      totalAmount: subtotal + taxAmount - discountAmount,
+      discountAmount: 0,
+      totalAmount,
       currency: prices[0].currency ?? DEFAULT_CURRENCY,
       taxRate: TAX_RATE,
+      coinEarnPreview,
+    };
+  }
+
+  /**
+   * Applies coin redemption to a quote. Coins reduce room subtotal first; tax is
+   * recalculated on the remaining subtotal.
+   */
+  applyCoinRedemption(quote: Quote, coinsToRedeem: number): Quote {
+    if (coinsToRedeem < 0) {
+      throw new BadRequestException('coinsToRedeem cannot be negative');
+    }
+    if (coinsToRedeem === 0) {
+      return { ...quote, coinsRedeemed: 0 };
+    }
+
+    const maxApplicable = quote.subtotal;
+    if (coinsToRedeem > maxApplicable) {
+      throw new BadRequestException(
+        `Cannot redeem more than ${maxApplicable} coins against this booking`,
+      );
+    }
+
+    const subtotalAfter = quote.subtotal - coinsToRedeem;
+    const taxAmount = this.estimateTaxes(subtotalAfter);
+    const totalAmount = subtotalAfter + taxAmount;
+
+    return {
+      ...quote,
+      taxAmount,
+      totalAmount,
+      coinsRedeemed: coinsToRedeem,
     };
   }
 
@@ -134,6 +189,7 @@ export class PricingService {
     ratePlanId: string,
     nights: Date[],
     rooms: number,
+    membership?: MembershipPricingContext,
   ): Promise<Quote> {
     const prices = await client.ratePrice.findMany({
       where: { ratePlanId, date: { in: nights } },
@@ -148,6 +204,6 @@ export class PricingService {
     }
 
     this.assertStayAllowed(ordered);
-    return this.computeQuote(ordered, rooms);
+    return this.computeQuote(ordered, rooms, membership);
   }
 }
