@@ -12,8 +12,12 @@ import {
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
-import { ListBookingsQueryDto } from '../../bookings/dto/list-bookings-query.dto';
-import { UpdateAdminBookingDto } from '../dto/admin.dto';
+import {
+  AdminCancelBookingDto,
+  AdminListBookingsQueryDto,
+  AdminRefundPaymentDto,
+  UpdateAdminBookingDto,
+} from './admin-bookings.dto';
 import { AdminBookingsService } from './admin-bookings.service';
 
 @Controller('admin/bookings')
@@ -23,7 +27,7 @@ export class AdminBookingsController {
   constructor(private readonly bookings: AdminBookingsService) {}
 
   @Get()
-  list(@Query() query: ListBookingsQueryDto) {
+  list(@Query() query: AdminListBookingsQueryDto) {
     return this.bookings.list(query);
   }
 
@@ -43,8 +47,23 @@ export class AdminBookingsController {
   }
 
   @Post(':id/cancel')
-  cancel(@Param('id') id: string) {
-    return this.bookings.cancel(id);
+  cancel(@Param('id') id: string, @Body() dto: AdminCancelBookingDto) {
+    return this.bookings.cancel(id, dto);
+  }
+
+  @Post(':id/refund')
+  refund(@Param('id') id: string, @Body() dto: AdminRefundPaymentDto) {
+    return this.bookings.refundPayment(id, dto);
+  }
+
+  @Post(':id/no-show')
+  markNoShow(@Param('id') id: string) {
+    return this.bookings.markNoShow(id);
+  }
+
+  @Post(':id/complete')
+  complete(@Param('id') id: string) {
+    return this.bookings.complete(id);
   }
 
   @Delete(':id')

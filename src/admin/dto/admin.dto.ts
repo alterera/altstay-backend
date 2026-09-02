@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -231,23 +232,6 @@ export class UpdateAreaDto {
   name?: string;
 }
 
-export class UpdateAdminBookingDto {
-  @IsOptional()
-  @IsString()
-  guestFirstName?: string;
-
-  @IsOptional()
-  @IsString()
-  guestLastName?: string;
-
-  @IsOptional()
-  @IsString()
-  guestPhone?: string;
-
-  @IsOptional()
-  @IsString()
-  guestEmail?: string;
-}
 
 export class CreateRoomTypeDto {
   @IsString()
@@ -312,8 +296,18 @@ export class UpdateRoomTypeDto {
   sizeSqm?: number;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['ACTIVE', 'INACTIVE'])
   status?: string;
+}
+
+export class UpdateInventoryRowDto {
+  @IsInt()
+  @Min(0)
+  totalRooms!: number;
+
+  @IsInt()
+  @Min(0)
+  blockedRooms!: number;
 }
 
 export class CreateRoomDto {
@@ -373,9 +367,6 @@ export class CreateRatePlanDto {
 }
 
 export class UpsertRatePricesDto {
-  @IsUUID()
-  ratePlanId!: string;
-
   @IsString()
   startDate!: string;
 
@@ -389,4 +380,26 @@ export class UpsertRatePricesDto {
   @IsOptional()
   @IsString()
   currency?: string;
+}
+
+export class UpdateRatePlanDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mealPlanId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  cancellationPolicyId?: string;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'INACTIVE'])
+  status?: string;
 }

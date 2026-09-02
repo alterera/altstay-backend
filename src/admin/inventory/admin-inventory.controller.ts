@@ -1,8 +1,21 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
-import { UpsertInventoryDto } from '../dto/admin.dto';
+import {
+  UpdateInventoryRowDto,
+  UpsertInventoryDto,
+} from '../dto/admin.dto';
 import { AdminInventoryService } from './admin-inventory.service';
 import { AdminPropertiesService } from '../properties/admin-properties.service';
 
@@ -16,9 +29,18 @@ export class AdminInventoryController {
   ) {}
 
   @Get()
-  async list(@Param('propertyId') propertyId: string) {
+  async list(
+    @Param('propertyId') propertyId: string,
+    @Query('roomTypeId') roomTypeId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
     await this.properties.getById(propertyId);
-    return this.inventory.listForProperty(propertyId);
+    return this.inventory.listForProperty(propertyId, {
+      roomTypeId,
+      from,
+      to,
+    });
   }
 
   @Post()
@@ -28,5 +50,26 @@ export class AdminInventoryController {
   ) {
     await this.properties.getById(propertyId);
     return this.inventory.upsert(propertyId, dto);
+  }
+
+  @Patch(':inventoryId')
+  async updateRow(
+    @Param('propertyId') propertyId: string,
+    @Param('inventoryId') inventoryId: string,
+    @Body() dto: UpdateInventoryRowDto,
+  ) {
+    await this.properties.getById(propertyId);
+    return this.inventory.updateRow(propertyId, inventoryId, dto);
+  }
+
+  @Delete()
+  async deleteRange(
+    @Param('propertyId') propertyId: string,
+    @Query('roomTypeId') roomTypeId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    await this.properties.getById(propertyId);
+    return this.inventory.deleteRange(propertyId, roomTypeId, from, to);
   }
 }

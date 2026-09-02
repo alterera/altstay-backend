@@ -9,7 +9,7 @@ import {
 describe('membership.utils', () => {
   const individualPlan = {
     code: 'INDIVIDUAL',
-    price: 999,
+    price: 1,
     durationDays: 365,
   };
   const corporatePlan = {

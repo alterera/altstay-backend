@@ -12,6 +12,7 @@ import { AdminPropertiesService } from './properties/admin-properties.service';
 import { AdminRatePlansController } from './rate-plans/admin-rate-plans.controller';
 import { AdminRatePlansService } from './rate-plans/admin-rate-plans.service';
 import { AdminRoomTypesController } from './room-types/admin-room-types.controller';
+import { AdminRoomTypesService } from './room-types/admin-room-types.service';
 import { AdminRoomsController } from './rooms/admin-rooms.controller';
 import { UploadsModule } from './uploads/uploads.module';
 
@@ -30,6 +31,7 @@ import { UploadsModule } from './uploads/uploads.module';
     AdminPropertiesService,
     AdminInventoryService,
     AdminRatePlansService,
+    AdminRoomTypesService,
     AdminBookingsService,
   ],
 })

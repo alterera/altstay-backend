@@ -44,7 +44,6 @@ const MEAL_PLANS = [
 const PROPERTY_TAGS = [
   { code: 'COUPLE_FRIENDLY', name: 'Couple Friendly' },
   { code: 'ACCEPTS_LOCAL_ID', name: 'Accepts Local ID' },
-  { code: 'UNMARRIED_COUPLES', name: 'Unmarried Couples Allowed' },
   { code: 'PAY_AT_HOTEL', name: 'Pay At Hotel' },
 ] as const;
 
@@ -80,8 +79,8 @@ const CITIES_WITH_AREAS = [
 const MEMBERSHIP_PLANS = [
   {
     code: 'INDIVIDUAL',
-    name: 'AlterStay Member',
-    price: 999,
+    name: 'Premium',
+    price: 1,
     durationDays: 365,
     discountPercent: 5,
     benefitsDescription:
@@ -89,7 +88,7 @@ const MEMBERSHIP_PLANS = [
   },
   {
     code: 'CORPORATE',
-    name: 'AlterStay Corporate',
+    name: 'Corporate',
     price: 2599,
     durationDays: 365,
     discountPercent: 10,
