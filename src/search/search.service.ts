@@ -121,6 +121,78 @@ export class SearchService {
     );
   }
 
+  async listFeatured(limit = 8) {
+    const properties = await this.prisma.property.findMany({
+      where: { status: PropertyStatus.ACTIVE },
+      take: limit,
+      orderBy: [{ guestRating: 'desc' }, { name: 'asc' }],
+      include: {
+        area: { select: { name: true } },
+        addresses: {
+          take: 1,
+          select: { city: true },
+        },
+        images: {
+          orderBy: { sortOrder: 'asc' },
+          take: 1,
+          select: { url: true },
+        },
+        ratePlans: {
+          where: { status: 'ACTIVE' },
+          select: {
+            prices: {
+              orderBy: { basePrice: 'asc' },
+              take: 1,
+              select: { basePrice: true },
+            },
+          },
+        },
+      },
+    });
+
+    const propertyIds = properties.map((property) => property.id);
+    const reviewCounts = propertyIds.length
+      ? await this.prisma.review.groupBy({
+          by: ['propertyId'],
+          where: { propertyId: { in: propertyIds } },
+          _count: { _all: true },
+        })
+      : [];
+    const reviewCountByProperty = new Map(
+      reviewCounts.map((row) => [row.propertyId, row._count._all]),
+    );
+
+    return Promise.all(
+      properties.map(async (property) => {
+        const priceCandidates = property.ratePlans
+          .map((plan) =>
+            plan.prices[0] ? Number(plan.prices[0].basePrice) : null,
+          )
+          .filter((value): value is number => value != null);
+        const startsFrom =
+          priceCandidates.length > 0 ? Math.min(...priceCandidates) : null;
+        const imageUrl = property.images[0]?.url
+          ? await this.s3.toDisplayUrl(property.images[0].url)
+          : null;
+
+        return {
+          id: property.id,
+          name: property.name,
+          slug: property.slug,
+          city: property.addresses[0]?.city ?? null,
+          area: property.area?.name ?? null,
+          imageUrl,
+          guestRating: property.guestRating
+            ? Number(property.guestRating)
+            : null,
+          reviewCount: reviewCountByProperty.get(property.id) ?? 0,
+          startsFrom,
+          currency: 'INR',
+        };
+      }),
+    );
+  }
+
   async getPropertyBySlug(slug: string, query: SearchQuery) {
     const roomsNeeded = query.rooms ?? 1;
     const guestCount =

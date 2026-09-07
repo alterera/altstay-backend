@@ -87,8 +87,26 @@ model User {
   membershipPurchases MembershipPurchase[]
   userMemberships     UserMembership[]
   alterCashTransactions AlterCashTransaction[]
+  savedGuests           SavedGuest[]
 
   @@map("users")
+}
+
+/// Saved guest profiles for quick fill at checkout (not booking Guest rows).
+model SavedGuest {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name  String
+  phone String
+  email String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@map("saved_guests")
 }
 
 model OtpVerification {

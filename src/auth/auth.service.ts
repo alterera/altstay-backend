@@ -25,7 +25,6 @@ import {
 import { UpdatePasswordDto, UpdateProfileDto } from './dto/profile.dto';
 import {
   generateOtp,
-  generateReferralCode,
   hashToken,
   normalizePhone,
   parseExpiry,
@@ -187,15 +186,12 @@ export class AuthService {
 
     let user = await this.prisma.user.findUnique({ where: { phone } });
     if (!user) {
-      const referralCode = await this.uniqueReferralCode(phone);
-
       user = await this.prisma.user.create({
         data: {
           phone,
           status: UserStatus.ACTIVE,
           mobileVerifiedAt: verifiedAt,
           lastLoginAt: verifiedAt,
-          referralCode,
           membershipTier: 'Free',
           userRoles: {
             create: { roleId: customerRole.id },
@@ -212,9 +208,6 @@ export class AuthService {
               : user.status,
           mobileVerifiedAt: user.mobileVerifiedAt ?? verifiedAt,
           lastLoginAt: verifiedAt,
-          ...(!user.referralCode
-            ? { referralCode: await this.uniqueReferralCode(user.id) }
-            : {}),
         },
       });
     }
@@ -360,7 +353,6 @@ export class AuthService {
         gender: true,
         dateOfBirth: true,
         cityOfResidence: true,
-        referralCode: true,
         alterCashBalance: true,
         membershipTier: true,
         membershipExpiresAt: true,
@@ -419,18 +411,6 @@ export class AuthService {
     });
 
     return { success: true };
-  }
-
-  private async uniqueReferralCode(seed: string): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const code = generateReferralCode(`${seed}:${attempt}:${Date.now()}`);
-      const existing = await this.prisma.user.findUnique({
-        where: { referralCode: code },
-        select: { id: true },
-      });
-      if (!existing) return code;
-    }
-    return generateReferralCode(`${seed}:${randomBytes(8).toString('hex')}`);
   }
 
   private async issueTokens(
@@ -496,7 +476,6 @@ export class AuthService {
       gender: string | null;
       dateOfBirth: Date | null;
       cityOfResidence: string | null;
-      referralCode: string | null;
       alterCashBalance: { toString(): string } | number;
       membershipTier: string;
       membershipExpiresAt: Date | null;
@@ -516,7 +495,6 @@ export class AuthService {
         ? user.dateOfBirth.toISOString().slice(0, 10)
         : null,
       cityOfResidence: user.cityOfResidence,
-      referralCode: user.referralCode,
       alterCashBalance: Number(user.alterCashBalance),
       membershipTier: user.membershipTier,
       membershipExpiresAt: user.membershipExpiresAt?.toISOString() ?? null,

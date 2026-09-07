@@ -79,7 +79,7 @@ const CITIES_WITH_AREAS = [
 const MEMBERSHIP_PLANS = [
   {
     code: 'INDIVIDUAL',
-    name: 'Premium',
+    name: 'Individual',
     price: 1,
     durationDays: 365,
     discountPercent: 5,

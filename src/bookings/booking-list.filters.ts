@@ -4,6 +4,7 @@ export const BOOKING_LIST_TABS = [
   'pending',
   'ongoing',
   'upcoming',
+  'previous',
   'cancelled',
 ] as const;
 export type BookingListTab = (typeof BOOKING_LIST_TABS)[number];
@@ -42,6 +43,11 @@ export function buildBookingTabWhere(
       return {
         status: ReservationStatus.CONFIRMED,
         checkIn: { gt: today },
+      };
+
+    case 'previous':
+      return {
+        status: ReservationStatus.COMPLETED,
       };
 
     case 'cancelled':

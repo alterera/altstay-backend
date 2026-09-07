@@ -6,6 +6,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RateLimitService } from './rate-limit/rate-limit.service';
+import { SavedGuestsController } from './saved-guests.controller';
+import { SavedGuestsService } from './saved-guests.service';
 import { WhatsappOtpService } from './whatsapp-otp.service';
 
 @Module({
@@ -23,8 +25,14 @@ import { WhatsappOtpService } from './whatsapp-otp.service';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, RateLimitService, WhatsappOtpService],
+  controllers: [AuthController, SavedGuestsController],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    RateLimitService,
+    WhatsappOtpService,
+    SavedGuestsService,
+  ],
   // RateLimitService is exported so other modules throttle against the same
   // buckets rather than each holding a private counter.
   exports: [AuthService, RateLimitService],

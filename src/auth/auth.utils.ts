@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 
 /** National subscriber number length for supported dial codes. */
 const NATIONAL_LENGTH_BY_DIAL: Record<string, number> = {
@@ -89,11 +89,4 @@ export function parseExpiry(duration: string, from = new Date()): Date {
     d: 24 * 60 * 60 * 1000,
   };
   return new Date(from.getTime() + amount * multipliers[unit]);
-}
-
-/** Short unique referral code for new accounts. */
-export function generateReferralCode(seed: string): string {
-  const hash = createHash('sha256').update(seed).digest('hex').slice(0, 8).toUpperCase();
-  const suffix = randomBytes(2).toString('hex').toUpperCase();
-  return `${hash}${suffix}`;
 }

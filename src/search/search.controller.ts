@@ -77,6 +77,16 @@ class SearchPropertiesQueryDto implements SearchQuery {
 export class SearchController {
   constructor(private readonly search: SearchService) {}
 
+  @Get('featured')
+  listFeatured(
+    @Query('limit') limit?: string,
+  ) {
+    const parsed = Number(limit);
+    return this.search.listFeatured(
+      Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 24) : 8,
+    );
+  }
+
   @Get('properties')
   searchProperties(@Query() query: SearchPropertiesQueryDto) {
     return this.search.searchProperties(query);
