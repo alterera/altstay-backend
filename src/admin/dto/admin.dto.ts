@@ -194,6 +194,26 @@ export class CreateAmenityDto {
   icon?: string;
 }
 
+export class CreateRestrictionDto {
+  @IsString()
+  label!: string;
+
+  @IsOptional()
+  @IsString()
+  icon?: string;
+}
+
+export class UpdatePropertyRestrictionsDto {
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  restrictionIds!: string[];
+}
+
+export class UpdateReviewStatusDto {
+  @IsString()
+  status!: 'PENDING' | 'APPROVED' | 'REJECTED';
+}
+
 export class CreateCityDto {
   @IsString()
   name!: string;

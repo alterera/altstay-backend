@@ -13,6 +13,7 @@ import {
   UpdatePropertyAmenitiesDto,
   UpdatePropertyDto,
   UpdatePropertyPoliciesDto,
+  UpdatePropertyRestrictionsDto,
   UpdatePropertyStatusDto,
 } from '../dto/admin.dto';
 
@@ -24,6 +25,7 @@ const propertyInclude = {
   tags: { include: { tag: true } },
   images: { orderBy: { sortOrder: 'asc' as const } },
   policies: true,
+  restrictions: { include: { restriction: true } },
   organization: true,
 } satisfies Prisma.PropertyInclude;
 
@@ -249,6 +251,20 @@ export class AdminPropertiesService {
           policyType: policy.policyType,
           title: policy.title,
           description: policy.description,
+        })),
+      }),
+    ]);
+    return this.getById(id);
+  }
+
+  async replaceRestrictions(id: string, dto: UpdatePropertyRestrictionsDto) {
+    await this.assertExists(id);
+    await this.prisma.$transaction([
+      this.prisma.propertyRestriction.deleteMany({ where: { propertyId: id } }),
+      this.prisma.propertyRestriction.createMany({
+        data: dto.restrictionIds.map((restrictionId) => ({
+          propertyId: id,
+          restrictionId,
         })),
       }),
     ]);

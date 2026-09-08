@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, PropertyStatus } from '../prisma/client';
+import { Prisma, PropertyStatus, ReviewStatus } from '../prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { eachNight } from '../admin/admin.utils';
 import { S3Service } from '../admin/uploads/s3.service';
@@ -121,9 +121,26 @@ export class SearchService {
     );
   }
 
-  async listFeatured(limit = 8) {
+  async listFeatured(options: {
+    limit?: number;
+    city?: string;
+    excludeSlug?: string;
+  } = {}) {
+    const limit = options.limit ?? 8;
     const properties = await this.prisma.property.findMany({
-      where: { status: PropertyStatus.ACTIVE },
+      where: {
+        status: PropertyStatus.ACTIVE,
+        ...(options.city
+          ? {
+              addresses: {
+                some: {
+                  city: { equals: options.city, mode: 'insensitive' },
+                },
+              },
+            }
+          : {}),
+        ...(options.excludeSlug ? { slug: { not: options.excludeSlug } } : {}),
+      },
       take: limit,
       orderBy: [{ guestRating: 'desc' }, { name: 'asc' }],
       include: {
@@ -154,7 +171,10 @@ export class SearchService {
     const reviewCounts = propertyIds.length
       ? await this.prisma.review.groupBy({
           by: ['propertyId'],
-          where: { propertyId: { in: propertyIds } },
+          where: {
+            propertyId: { in: propertyIds },
+            status: ReviewStatus.APPROVED,
+          },
           _count: { _all: true },
         })
       : [];
@@ -214,6 +234,10 @@ export class SearchService {
           orderBy: { amenity: { name: 'asc' } },
         },
         policies: { orderBy: { title: 'asc' } },
+        restrictions: {
+          include: { restriction: true },
+          orderBy: { restriction: { label: 'asc' } },
+        },
         tags: { include: { tag: true } },
         roomTypes: {
           where: { status: 'ACTIVE' },
@@ -349,6 +373,8 @@ export class SearchService {
     const minTotalPrice =
       minPricePerNight !== null ? minPricePerNight * nightsCount : null;
 
+    const reviewPayload = await this.buildPropertyReviewPayload(property.id);
+
     return {
       id: property.id,
       name: property.name,
@@ -393,6 +419,13 @@ export class SearchService {
         title: p.title,
         description: p.description,
       })),
+      restrictions: property.restrictions.map((r) => ({
+        id: r.restriction.id,
+        label: r.restriction.label,
+        icon: r.restriction.icon,
+      })),
+      reviewSummary: reviewPayload.reviewSummary,
+      reviews: reviewPayload.reviews,
       roomTypes,
       minTotalPrice,
       minPricePerNight,
@@ -582,7 +615,10 @@ export class SearchService {
     const reviewCounts = results.length
       ? await this.prisma.review.groupBy({
           by: ['propertyId'],
-          where: { propertyId: { in: results.map((r) => r.id) } },
+          where: {
+            propertyId: { in: results.map((r) => r.id) },
+            status: ReviewStatus.APPROVED,
+          },
           _count: { _all: true },
         })
       : [];
@@ -702,5 +738,86 @@ export class SearchService {
         sorted.sort((a, b) => a.name.localeCompare(b.name));
     }
     return sorted;
+  }
+
+  private async buildPropertyReviewPayload(propertyId: string) {
+    const approvedReviews = await this.prisma.review.findMany({
+      where: { propertyId, status: ReviewStatus.APPROVED },
+      include: {
+        user: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    const aggregates = await this.prisma.review.aggregate({
+      where: { propertyId, status: ReviewStatus.APPROVED },
+      _avg: {
+        rating: true,
+        ratingCheckIn: true,
+        ratingRoom: true,
+        ratingStaff: true,
+        ratingSurroundings: true,
+      },
+      _count: { _all: true },
+    });
+
+    const roundRating = (value: number | null | undefined) =>
+      value == null ? null : Math.round(value * 10) / 10;
+
+    const reviewCount = aggregates._count._all;
+    const guestRating = roundRating(aggregates._avg.rating);
+
+    return {
+      reviewSummary: {
+        guestRating,
+        reviewCount,
+        breakdown: {
+          smoothCheckIn: roundRating(aggregates._avg.ratingCheckIn) ?? guestRating,
+          roomQuality: roundRating(aggregates._avg.ratingRoom) ?? guestRating,
+          staffBehavior: roundRating(aggregates._avg.ratingStaff) ?? guestRating,
+          hotelSurroundings:
+            roundRating(aggregates._avg.ratingSurroundings) ?? guestRating,
+        },
+      },
+      reviews: approvedReviews.map((review) => ({
+        id: review.id,
+        authorName: this.maskReviewerName(
+          review.user.firstName,
+          review.user.lastName,
+        ),
+        authorInitials: this.reviewerInitials(
+          review.user.firstName,
+          review.user.lastName,
+        ),
+        rating: review.rating,
+        date: review.createdAt.toISOString().slice(0, 10),
+        comment: review.comment ?? '',
+        breakdown: {
+          smoothCheckIn: review.ratingCheckIn ?? review.rating,
+          roomQuality: review.ratingRoom ?? review.rating,
+          staffBehavior: review.ratingStaff ?? review.rating,
+          hotelSurroundings: review.ratingSurroundings ?? review.rating,
+        },
+      })),
+    };
+  }
+
+  private maskReviewerName(
+    firstName: string | null,
+    lastName: string | null,
+  ): string {
+    const first = firstName?.trim() || 'Guest';
+    const lastInitial = lastName?.trim()?.charAt(0);
+    return lastInitial ? `${first} ${lastInitial}.` : first;
+  }
+
+  private reviewerInitials(
+    firstName: string | null,
+    lastName: string | null,
+  ): string {
+    const first = firstName?.trim()?.charAt(0) ?? 'G';
+    const last = lastName?.trim()?.charAt(0) ?? '';
+    return `${first}${last}`.toUpperCase();
   }
 }

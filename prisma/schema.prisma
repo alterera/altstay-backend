@@ -88,6 +88,7 @@ model User {
   userMemberships     UserMembership[]
   alterCashTransactions AlterCashTransaction[]
   savedGuests           SavedGuest[]
+  reviews               Review[]
 
   @@map("users")
 }
@@ -364,6 +365,8 @@ model Property {
   reservations Reservation[]
   tags         PropertyTagAssignment[]
   bookingQuotes BookingQuote[]
+  restrictions PropertyRestriction[]
+  reviews      Review[]
 
   @@index([organizationId])
   @@index([status])
@@ -527,6 +530,27 @@ model PropertyAmenity {
 
   @@id([propertyId, amenityId])
   @@map("property_amenities")
+}
+
+model Restriction {
+  id       String  @id @default(uuid()) @db.Uuid
+  label    String  @unique
+  icon     String?
+  status   String  @default("ACTIVE")
+
+  properties PropertyRestriction[]
+
+  @@map("restrictions")
+}
+
+model PropertyRestriction {
+  propertyId    String @db.Uuid
+  property      Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  restrictionId String      @db.Uuid
+  restriction   Restriction @relation(fields: [restrictionId], references: [id], onDelete: Cascade)
+
+  @@id([propertyId, restrictionId])
+  @@map("property_restrictions")
 }
 
 model RoomAmenity {
@@ -919,24 +943,37 @@ model PaymentWebhookEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Later: reviews (ties to reservation for verified stays)
+// Reviews (ties to reservation for verified stays)
 // ---------------------------------------------------------------------------
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
 
 model Review {
   id            String      @id @default(uuid()) @db.Uuid
   reservationId String      @db.Uuid
   reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   userId        String      @db.Uuid
+  user          User        @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  propertyId String
+  propertyId String @db.Uuid
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   rating     Int
+  ratingCheckIn      Int?
+  ratingRoom         Int?
+  ratingStaff        Int?
+  ratingSurroundings Int?
   title      String?
   comment    String?
-  status     String  @default("PENDING")
+  status     ReviewStatus @default(PENDING)
 
   createdAt DateTime @default(now())
 
   @@index([propertyId])
+  @@index([propertyId, status])
   @@map("reviews")
 }
 

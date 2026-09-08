@@ -21,6 +21,7 @@ import {
   UpdatePropertyAmenitiesDto,
   UpdatePropertyDto,
   UpdatePropertyPoliciesDto,
+  UpdatePropertyRestrictionsDto,
   UpdatePropertyStatusDto,
 } from '../dto/admin.dto';
 import { AdminPropertiesService } from './admin-properties.service';
@@ -73,6 +74,14 @@ export class AdminPropertiesController {
     @Body() dto: UpdatePropertyPoliciesDto,
   ) {
     return this.properties.replacePolicies(id, dto);
+  }
+
+  @Put(':id/restrictions')
+  replaceRestrictions(
+    @Param('id') id: string,
+    @Body() dto: UpdatePropertyRestrictionsDto,
+  ) {
+    return this.properties.replaceRestrictions(id, dto);
   }
 
   @Post(':id/images')

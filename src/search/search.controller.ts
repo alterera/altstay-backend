@@ -80,11 +80,15 @@ export class SearchController {
   @Get('featured')
   listFeatured(
     @Query('limit') limit?: string,
+    @Query('city') city?: string,
+    @Query('exclude') exclude?: string,
   ) {
     const parsed = Number(limit);
-    return this.search.listFeatured(
-      Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 24) : 8,
-    );
+    return this.search.listFeatured({
+      limit: Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 24) : 8,
+      city,
+      excludeSlug: exclude,
+    });
   }
 
   @Get('properties')

@@ -19,6 +19,7 @@ import {
   CreateAmenityDto,
   CreateAreaDto,
   CreateCityDto,
+  CreateRestrictionDto,
   UpdateAreaDto,
   UpdateCityDto,
 } from '../dto/admin.dto';
@@ -139,6 +140,25 @@ export class AdminCatalogController {
       data: {
         name: dto.name,
         category: dto.category,
+        icon: dto.icon,
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  @Get('restrictions')
+  listRestrictions() {
+    return this.prisma.restriction.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { label: 'asc' },
+    });
+  }
+
+  @Post('restrictions')
+  createRestriction(@Body() dto: CreateRestrictionDto) {
+    return this.prisma.restriction.create({
+      data: {
+        label: dto.label.trim(),
         icon: dto.icon,
         status: 'ACTIVE',
       },

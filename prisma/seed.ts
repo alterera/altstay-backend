@@ -32,6 +32,63 @@ const AMENITIES = [
   { name: 'Air Conditioning', category: 'ROOM' },
   { name: 'Room Service', category: 'DINING' },
   { name: '24/7 Front Desk', category: 'SERVICES' },
+  { name: 'Spa & Wellness', category: 'PERK' },
+  { name: 'Rooftop Bar', category: 'PERK' },
+  { name: 'Business Lounge', category: 'PERK' },
+] as const;
+
+const RESTRICTIONS = [
+  { label: 'Alcohol/Smoking Not Allowed' },
+  { label: 'Pets Not Allowed' },
+  { label: 'Outside Food Allowed' },
+  { label: 'Unmarried Couples Allowed' },
+] as const;
+
+const SEED_REVIEWS = [
+  {
+    firstName: 'Priya',
+    lastName: 'Sharma',
+    rating: 5,
+    ratingCheckIn: 5,
+    ratingRoom: 5,
+    ratingStaff: 5,
+    ratingSurroundings: 4,
+    comment:
+      'Smooth check-in and a spotless room. Staff were attentive without being intrusive — exactly what we wanted for a weekend getaway.',
+  },
+  {
+    firstName: 'Rahul',
+    lastName: 'Mehta',
+    rating: 4,
+    ratingCheckIn: 4,
+    ratingRoom: 4,
+    ratingStaff: 5,
+    ratingSurroundings: 4,
+    comment:
+      'Great location and comfortable beds. Breakfast spread was better than expected. Would happily book again for business trips.',
+  },
+  {
+    firstName: 'Ananya',
+    lastName: 'Iyer',
+    rating: 5,
+    ratingCheckIn: 5,
+    ratingRoom: 5,
+    ratingStaff: 4,
+    ratingSurroundings: 5,
+    comment:
+      'Loved the ambience and the view from our room. Housekeeping was prompt and the front desk helped us with early luggage storage.',
+  },
+  {
+    firstName: 'Vikram',
+    lastName: 'Singh',
+    rating: 4,
+    ratingCheckIn: 4,
+    ratingRoom: 4,
+    ratingStaff: 4,
+    ratingSurroundings: 3,
+    comment:
+      'Solid value for money. Room was quiet, Wi‑Fi was reliable, and checkout was quick. Minor wait at the restaurant during peak hours.',
+  },
 ] as const;
 
 const MEAL_PLANS = [
@@ -134,6 +191,14 @@ async function main() {
       where: { name: amenity.name },
       update: { category: amenity.category },
       create: { ...amenity, status: 'ACTIVE' },
+    });
+  }
+
+  for (const restriction of RESTRICTIONS) {
+    await prisma.restriction.upsert({
+      where: { label: restriction.label },
+      update: { status: 'ACTIVE' },
+      create: { ...restriction, status: 'ACTIVE' },
     });
   }
 
@@ -246,6 +311,17 @@ async function main() {
           some: { city: { equals: 'Guwahati', mode: 'insensitive' } },
         },
       },
+      include: {
+        amenities: true,
+      },
+    });
+
+    const allRestrictions = await prisma.restriction.findMany();
+    const perkAmenities = await prisma.amenity.findMany({
+      where: { category: 'PERK' },
+    });
+    const facilityAmenities = await prisma.amenity.findMany({
+      where: { category: { not: 'PERK' } },
     });
 
     for (const property of guwahatiProperties) {
@@ -265,6 +341,119 @@ async function main() {
           update: {},
           create: { propertyId: property.id, tagId: tag.id },
         });
+      }
+
+      const defaultRestrictionIds = allRestrictions
+        .filter((r) =>
+          ['Alcohol/Smoking Not Allowed', 'Pets Not Allowed', 'Outside Food Allowed'].includes(
+            r.label,
+          ),
+        )
+        .map((r) => r.id);
+
+      await prisma.propertyRestriction.deleteMany({
+        where: { propertyId: property.id },
+      });
+      if (defaultRestrictionIds.length) {
+        await prisma.propertyRestriction.createMany({
+          data: defaultRestrictionIds.map((restrictionId) => ({
+            propertyId: property.id,
+            restrictionId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      const perkIds = perkAmenities.slice(0, 2).map((a) => a.id);
+      const amenityIds = facilityAmenities.slice(0, 5).map((a) => a.id);
+      await prisma.propertyAmenity.deleteMany({ where: { propertyId: property.id } });
+      await prisma.propertyAmenity.createMany({
+        data: [...perkIds, ...amenityIds].map((amenityId) => ({
+          propertyId: property.id,
+          amenityId,
+        })),
+        skipDuplicates: true,
+      });
+
+      await prisma.propertyPolicy.deleteMany({ where: { propertyId: property.id } });
+      await prisma.propertyPolicy.createMany({
+        data: [
+          {
+            propertyId: property.id,
+            policyType: 'CHECK_IN',
+            title: 'Early check-in subject to availability',
+            description: 'Contact the front desk on arrival day',
+          },
+          {
+            propertyId: property.id,
+            policyType: 'REQUIREMENT',
+            title: 'Original ID mandatory for all guests',
+          },
+        ],
+      });
+
+      const existingReviews = await prisma.review.count({
+        where: { propertyId: property.id },
+      });
+      if (existingReviews === 0) {
+        for (let index = 0; index < SEED_REVIEWS.length; index++) {
+          const reviewSeed = SEED_REVIEWS[index];
+          const phone = `+9198765432${String(index).padStart(2, '0')}`;
+          const reviewer = await prisma.user.upsert({
+            where: { phone },
+            update: {
+              firstName: reviewSeed.firstName,
+              lastName: reviewSeed.lastName,
+              status: UserStatus.ACTIVE,
+            },
+            create: {
+              phone,
+              firstName: reviewSeed.firstName,
+              lastName: reviewSeed.lastName,
+              status: UserStatus.ACTIVE,
+              mobileVerifiedAt: new Date(),
+            },
+          });
+
+          const reservationNumber = `SEED-${property.slug}-${index + 1}`;
+          const reservation = await prisma.reservation.upsert({
+            where: { reservationNumber },
+            update: {
+              status: 'COMPLETED',
+              propertyId: property.id,
+              userId: reviewer.id,
+            },
+            create: {
+              reservationNumber,
+              userId: reviewer.id,
+              propertyId: property.id,
+              checkIn: new Date('2026-06-01'),
+              checkOut: new Date('2026-06-03'),
+              status: 'COMPLETED',
+              subtotal: 5000,
+              taxAmount: 600,
+              discountAmount: 0,
+              totalAmount: 5600,
+              currency: 'INR',
+              confirmedAt: new Date('2026-05-20'),
+            },
+          });
+
+          await prisma.review.create({
+            data: {
+              reservationId: reservation.id,
+              userId: reviewer.id,
+              propertyId: property.id,
+              rating: reviewSeed.rating,
+              ratingCheckIn: reviewSeed.ratingCheckIn,
+              ratingRoom: reviewSeed.ratingRoom,
+              ratingStaff: reviewSeed.ratingStaff,
+              ratingSurroundings: reviewSeed.ratingSurroundings,
+              comment: reviewSeed.comment,
+              status: 'APPROVED',
+            },
+          });
+        }
       }
     }
   }
