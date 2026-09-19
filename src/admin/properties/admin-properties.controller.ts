@@ -94,6 +94,14 @@ export class AdminPropertiesController {
     return this.properties.addImage(id, file);
   }
 
+  @Patch(':id/images/:imageId/thumbnail')
+  setThumbnail(
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.properties.setThumbnail(id, imageId);
+  }
+
   @Delete(':id/images/:imageId')
   deleteImage(
     @Param('id') id: string,

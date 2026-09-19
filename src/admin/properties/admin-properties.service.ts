@@ -19,7 +19,7 @@ import {
 
 const propertyInclude = {
   propertyType: true,
-  area: true,
+  area: { include: { city: true } },
   addresses: true,
   amenities: { include: { amenity: true } },
   tags: { include: { tag: true } },
@@ -310,6 +310,33 @@ export class AdminPropertiesService {
       })),
     );
     return { ...property, images };
+  }
+
+  async setThumbnail(propertyId: string, imageId: string) {
+    await this.assertExists(propertyId);
+    const images = await this.prisma.propertyImage.findMany({
+      where: { propertyId },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const target = images.find((image) => image.id === imageId);
+    if (!target) throw new NotFoundException('Image not found');
+    if (images[0]?.id === imageId) {
+      return this.getById(propertyId);
+    }
+
+    const reordered = [
+      target,
+      ...images.filter((image) => image.id !== imageId),
+    ];
+    await this.prisma.$transaction(
+      reordered.map((image, index) =>
+        this.prisma.propertyImage.update({
+          where: { id: image.id },
+          data: { sortOrder: index },
+        }),
+      ),
+    );
+    return this.getById(propertyId);
   }
 
   async deleteImage(propertyId: string, imageId: string) {

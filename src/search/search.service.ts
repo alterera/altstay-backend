@@ -144,7 +144,7 @@ export class SearchService {
       take: limit,
       orderBy: [{ guestRating: 'desc' }, { name: 'asc' }],
       include: {
-        area: { select: { name: true } },
+        area: { include: { city: { select: { name: true } } } },
         addresses: {
           take: 1,
           select: { city: true },
@@ -199,7 +199,8 @@ export class SearchService {
           id: property.id,
           name: property.name,
           slug: property.slug,
-          city: property.addresses[0]?.city ?? null,
+          city:
+            property.area?.city?.name ?? property.addresses[0]?.city ?? null,
           area: property.area?.name ?? null,
           imageUrl,
           guestRating: property.guestRating
@@ -226,7 +227,7 @@ export class SearchService {
       where: { slug, status: PropertyStatus.ACTIVE },
       include: {
         propertyType: true,
-        area: true,
+        area: { include: { city: true } },
         addresses: true,
         images: { orderBy: { sortOrder: 'asc' } },
         amenities: {
@@ -386,8 +387,8 @@ export class SearchService {
       checkInTime: property.checkInTime,
       checkOutTime: property.checkOutTime,
       propertyType: property.propertyType,
-      city: address?.city,
-      area: property.area?.name ?? address?.city,
+      city: property.area?.city?.name ?? address?.city,
+      area: property.area?.name ?? null,
       state: address?.state,
       country: address?.country,
       address: address
@@ -512,7 +513,7 @@ export class SearchService {
       },
       include: {
         propertyType: true,
-        area: true,
+        area: { include: { city: true } },
         addresses: true,
         images: { orderBy: { sortOrder: 'asc' }, take: 5 },
         amenities: {
@@ -576,8 +577,8 @@ export class SearchService {
                 : null,
               isBusinessHotel: property.isBusinessHotel,
               propertyType: property.propertyType,
-              city: address?.city,
-              area: property.area?.name ?? address?.city,
+              city: property.area?.city?.name ?? address?.city,
+              area: property.area?.name ?? null,
               state: address?.state,
               country: address?.country,
               postalCode: address?.postalCode ?? undefined,
