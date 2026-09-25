@@ -37,11 +37,25 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
+            echo "Validating object storage configuration..."
+            test -f .env || { echo "Server .env is missing"; exit 1; }
+            for name in S3_ENDPOINT S3_FORCE_PATH_STYLE S3_REGION S3_BUCKET S3_PUBLIC_BASE_URL S3_ACCESS_KEY S3_SECRET_KEY; do
+              grep -Eq "^${name}=\"?[^\"[:space:]]" .env || { echo "Missing ${name} in server .env"; exit 1; }
+            done
+            if grep -Eq '^(AWS_REGION|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|S3_SIGN_DISPLAY_URLS)=' .env; then
+              echo "Remove obsolete AWS storage variables from server .env"; exit 1
+            fi
+            grep -Eq '^S3_FORCE_PATH_STYLE="?true"?[[:space:]]*$' .env || { echo "S3_FORCE_PATH_STYLE must be true"; exit 1; }
+            grep -Eq '^S3_PUBLIC_BASE_URL="?https://' .env || { echo "S3_PUBLIC_BASE_URL must use https:// in production"; exit 1; }
+
             echo "Installing dependencies..."
             npm ci
 
             echo "Building application..."
             npm run build
+
+            echo "Applying database migrations..."
+            npx prisma migrate deploy
 
             echo "Reloading application..."
             pm2 reload alterstay-api

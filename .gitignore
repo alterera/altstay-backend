@@ -40,7 +40,7 @@ docs/
 
 # dotenv environment variable files
 .env*
-.env.example
+!.env.example
 .env.main
 .env.txt
 env.txt

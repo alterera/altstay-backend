@@ -38,3 +38,13 @@ process.env.PAYMENT_SERVICE_BASE_URL ??= 'https://pay.e2e.invalid';
 process.env.PAYMENT_SERVICE_TOKEN ??= 'e2e-service-token';
 process.env.PAYMENT_NOTIFICATION_SIGNING_SECRET ??= 'e2e-notification-secret';
 process.env.BOOKING_RESULT_URL ??= 'https://alterstays.e2e.invalid/booking/payment-result';
+
+// Object storage is never contacted by these suites, but S3Service validates its
+// config at boot. `||=` also replaces the blank credentials kept in local `.env`.
+process.env.S3_ENDPOINT ||= 'http://127.0.0.1:9000';
+process.env.S3_FORCE_PATH_STYLE ||= 'true';
+process.env.S3_REGION ||= 'us-east-1';
+process.env.S3_BUCKET ||= 'alterstay-images';
+process.env.S3_PUBLIC_BASE_URL ||= 'https://media.e2e.invalid/alterstay-images';
+process.env.S3_ACCESS_KEY ||= 'e2e-access-key';
+process.env.S3_SECRET_KEY ||= 'e2e-secret-key';

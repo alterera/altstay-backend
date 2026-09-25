@@ -1,7 +1,10 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, PropertyStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -31,6 +34,8 @@ const propertyInclude = {
 
 @Injectable()
 export class AdminPropertiesService {
+  private readonly logger = new Logger(AdminPropertiesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
@@ -344,8 +349,38 @@ export class AdminPropertiesService {
       where: { id: imageId, propertyId },
     });
     if (!image) throw new NotFoundException('Image not found');
-    await this.s3.deleteByUrl(image.url).catch(() => undefined);
-    await this.prisma.propertyImage.delete({ where: { id: imageId } });
+
+    const key = this.s3.extractObjectKey(image.url);
+    if (!key) {
+      throw new BadRequestException(
+        'Image URL does not reference the configured storage bucket',
+      );
+    }
+
+    try {
+      await this.s3.deleteObject(key);
+    } catch (error) {
+      this.logger.error(
+        `Storage delete failed for property ${propertyId} image ${imageId} key ${key}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new ServiceUnavailableException(
+        'Image storage is unavailable; the image was not deleted',
+      );
+    }
+
+    // DeleteObject is idempotent, so retrying after this failure is safe.
+    try {
+      await this.prisma.propertyImage.delete({ where: { id: imageId } });
+    } catch (error) {
+      this.logger.error(
+        `Image record delete failed after storage delete for property ${propertyId} image ${imageId} key ${key}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(
+        'Image was removed from storage but its record could not be deleted; retry the deletion',
+      );
+    }
     return { success: true };
   }
 }
